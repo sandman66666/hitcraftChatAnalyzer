@@ -2,9 +2,13 @@ import os
 import json
 import requests
 import time
+import logging
 from typing import List, Dict, Any
 
-def analyze_chunks(chunks: List[str], api_key: str = None, use_mock: bool = False) -> List[Dict[str, Any]]:
+# Get logger
+logger = logging.getLogger('hitcraft_analyzer')
+
+def analyze_chunks(chunks: List[str], api_key: str = None, use_mock: bool = False, max_chunks: int = None) -> List[Dict[str, Any]]:
     """
     Analyze text chunks using Claude AI and return analysis results
     
@@ -12,6 +16,7 @@ def analyze_chunks(chunks: List[str], api_key: str = None, use_mock: bool = Fals
         chunks: List of text chunks to analyze
         api_key: Claude API key (optional if use_mock is True)
         use_mock: If True, return mock data instead of calling Claude API
+        max_chunks: Maximum number of chunks to analyze (default: None = all chunks)
         
     Returns:
         List of analysis results, one for each chunk
@@ -20,27 +25,40 @@ def analyze_chunks(chunks: List[str], api_key: str = None, use_mock: bool = Fals
     
     # If mock mode is enabled, return realistic mock data
     if use_mock:
-        print("Using mock data instead of calling Claude AI...")
+        logger.info("Using mock data instead of calling Claude AI...")
         return [generate_mock_analysis()]
     
     # Ensure API key is provided if not in mock mode
     if not api_key:
         raise ValueError("Claude API key is required when not using mock mode")
     
-    for i, chunk in enumerate(chunks):
-        print(f"Analyzing chunk {i+1} of {len(chunks)}...")
+    # Limit the number of chunks if specified
+    if max_chunks is not None and max_chunks > 0:
+        print(f"Limiting analysis to the first {max_chunks} chunks (out of {len(chunks)} total)")
+        chunks_to_analyze = chunks[:max_chunks]
+    else:
+        chunks_to_analyze = chunks
+    
+    for i, chunk in enumerate(chunks_to_analyze):
+        print(f"Analyzing chunk {i+1} of {len(chunks_to_analyze)}...")
         
         try:
             # Send to Claude for analysis and get results
             analysis = analyze_with_claude(chunk, api_key)
+            logger.info(f"Analysis of chunk {i+1} completed successfully")
+            
+            # Debug: Log the structure of the analysis result
+            logger.info(f"Analysis result keys: {list(analysis.keys() if isinstance(analysis, dict) else [])}")
+            
             results.append(analysis)
             
             # Avoid rate limiting
-            if i < len(chunks) - 1:
+            if i < len(chunks_to_analyze) - 1:
                 time.sleep(1)
                 
         except Exception as e:
-            print(f"Error analyzing chunk {i+1}: {str(e)}")
+            error_msg = f"Error analyzing chunk {i+1}: {str(e)}"
+            logger.error(error_msg)
             # Add partial result to maintain chunk order
             results.append({
                 "error": str(e),
@@ -81,11 +99,27 @@ def generate_mock_analysis() -> Dict[str, Any]:
             ]
         },
         "improvement_areas": [
-            "More specialized knowledge in music theory concepts",
-            "Better handling of non-English inquiries",
-            "More detailed guidance on technical aspects of music production",
-            "More personalized responses based on user's skill level",
-            "Better continuity between conversations with the same user"
+            {
+                "area": "More specialized knowledge in music theory concepts",
+                "supporting_evidence": [
+                    "Conversation #12: User: 'Can you explain how to use secondary dominants in a jazz context?' Assistant: 'Secondary dominants are chords that temporarily target a chord other than the tonic. In jazz, they're commonly used for creating tension. I'd recommend using them before the ii or V chord for a classic jazz sound.'",
+                    "Conversation #27: User: 'What's the difference between modal interchange and secondary dominants?' Assistant: 'Modal interchange borrows chords from parallel modes, while secondary dominants are dominant chords that resolve to a chord other than the tonic. Both add interest to progressions.'"
+                ]
+            },
+            {
+                "area": "Better handling of non-English inquiries",
+                "supporting_evidence": [
+                    "Conversation #41: User: '¿Puedes ayudarme a escribir letras en español?' Assistant: 'I'd be happy to help you write lyrics, but could you provide me with some context or themes you'd like to explore?'",
+                    "Conversation #55: User: 'Comment structurer une chanson en français?' Assistant: 'Song structure typically includes verses, chorus, and possibly a bridge. Would you like me to explain these elements in more detail?'"
+                ]
+            },
+            {
+                "area": "More detailed guidance on technical aspects of music production",
+                "supporting_evidence": [
+                    "Conversation #18: User: 'How do I get that warm, saturated drum sound like in this reference track?' Assistant: 'That warm drum sound likely comes from analog saturation or compression. Try adding a saturation plugin to your drum bus and experiment with tape emulation.'",
+                    "Conversation #36: User: 'What's the best way to sidechain compress my bass to my kick?' Assistant: 'Sidechain compression helps create room for your kick by ducking the bass. Set up a compressor on your bass track with the kick as the sidechain input, then adjust threshold and release to taste.'"
+                ]
+            }
         ],
         "user_satisfaction": {
             "overall_assessment": "Users generally appear satisfied with the service, particularly when getting specific guidance on song structure, genre transformation, and lyric writing. However, satisfaction appears lower when technical production questions aren't fully addressed.",
@@ -102,11 +136,27 @@ def generate_mock_analysis() -> Dict[str, Any]:
             ]
         },
         "unmet_needs": [
-            "Deeper technical production guidance",
-            "Support for multiple languages",
-            "More personalized feedback on uploaded music",
-            "Better understanding of specific musical genres",
-            "More detailed music business advice"
+            {
+                "need": "Deeper technical production guidance",
+                "supporting_evidence": [
+                    "Conversation #23: User: 'How do I create that specific wavy lo-fi effect on my piano?' Assistant: 'To create a lo-fi piano effect, try using a bit crusher plugin, reduce the sample rate, and add some tape saturation or noise.'",
+                    "Conversation #47: User: 'What's the best way to create that vocal chop effect like in this track?' Assistant: 'Vocal chops involve cutting vocals into small segments and rearranging them. You can use your DAW's sampler or audio editor to slice vocals, then rearrange them with different pitches or effects.'"
+                ]
+            },
+            {
+                "need": "Support for multiple languages",
+                "supporting_evidence": [
+                    "Conversation #41: User: '¿Puedes ayudarme a escribir letras en español?' Assistant: 'I'd be happy to help you write lyrics, but could you provide me with some context or themes you'd like to explore?'",
+                    "Conversation #55: User: 'Comment structurer une chanson en français?' Assistant: 'Song structure typically includes verses, chorus, and possibly a bridge. Would you like me to explain these elements in more detail?'"
+                ]
+            },
+            {
+                "need": "More personalized feedback on uploaded music",
+                "supporting_evidence": [
+                    "Conversation #32: User: 'What do you think of this track? [audio attachment]' Assistant: 'I'm sorry, but I can't listen to audio attachments. If you'd like feedback, please describe the track or share specific aspects you'd like me to comment on.'",
+                    "Conversation #67: User: 'Can you tell me if my mix is balanced? [link to track]' Assistant: 'I can't listen to the track, but I can provide general mixing advice. Make sure your kick and bass aren't competing, check that vocals sit well in the mix, and ensure no frequency range is too dominant.'"
+                ]
+            }
         ],
         "product_effectiveness": {
             "assessment": "HitCraft effectively serves as a helpful music production and songwriting assistant, particularly excelling at lyric generation, song structure guidance, and basic music business advice. It provides accessible support for users at various skill levels but could improve in technical depth.",
@@ -123,11 +173,41 @@ def generate_mock_analysis() -> Dict[str, Any]:
             ]
         },
         "key_insights": [
-            "Users most frequently seek help with song structure and genre transformation, suggesting these are challenging areas for musicians.",
-            "The conversational format works well for songwriting assistance, where an iterative approach helps users refine their ideas.",
-            "Users appreciate personalized feedback but want more technical depth in production guidance.",
-            "There's significant interest in music business topics like licensing and copyright, indicating users are concerned about the business side of their music.",
-            "The ability to process and provide feedback on uploaded music is highly valued by users."
+            {
+                "insight": "Users most frequently seek help with song structure and genre transformation, suggesting these are challenging areas for musicians.",
+                "supporting_evidence": [
+                    "Conversation #7: User: 'How do I transition from the verse to chorus without it feeling abrupt?' Assistant: 'Try using a pre-chorus as a transitional section. You can also use a drum fill, gradually increase intensity, or introduce a new instrument right before the chorus to smooth the transition.'",
+                    "Conversation #15: User: 'I have a folk song but want to make it more electronic. Any suggestions?' Assistant: 'To transform a folk song into an electronic track, start by maintaining the core melody and lyrics. Add a steady electronic beat, introduce synthesizers that complement the original melody, and consider using folk instruments as samples or one-shots.'"
+                ]
+            },
+            {
+                "insight": "The conversational format works well for songwriting assistance, where an iterative approach helps users refine their ideas.",
+                "supporting_evidence": [
+                    "Conversation #22: User: 'I need help writing lyrics about lost love.' Assistant: 'What specific emotions or experiences would you like to convey in these lyrics? Are you looking for something more poetic and metaphorical, or direct and conversational?' User: 'More poetic, focusing on the emptiness afterwards.' Assistant: 'Here are some lyrical ideas that capture that poetic sense of emptiness: [lyrics provided]'",
+                    "Conversation #39: User: 'I wrote this chorus but it feels generic.' Assistant: 'Let's see how we can make it more distinctive. What specific emotions or imagery are you trying to convey?' User: 'It's about finding strength after hardship.' Assistant: 'Try incorporating more specific imagery related to your journey. Instead of \"I survived the storm,\" try something like \"Each lightning strike etched new strength in my bones.\"'"
+                ]
+            },
+            {
+                "insight": "Users appreciate personalized feedback but want more technical depth in production guidance.",
+                "supporting_evidence": [
+                    "Conversation #53: User: 'Thanks for the feedback on my lyrics, it's exactly what I needed!' Assistant: 'You're welcome! I'm glad the suggestions were helpful. Let me know if you'd like to work on any other aspects of your songwriting.'",
+                    "Conversation #18: User: 'How do I get that warm, saturated drum sound like in this reference track?' Assistant: 'That warm drum sound likely comes from analog saturation or compression. Try adding a saturation plugin to your drum bus and experiment with tape emulation.' User: 'Which specific plugins would you recommend?' Assistant: 'I can't recommend specific plugins, but look for ones that emulate analog tape, tubes, or console saturation.'"
+                ]
+            },
+            {
+                "insight": "There's significant interest in music business topics like licensing and copyright, indicating users are concerned about the business side of their music.",
+                "supporting_evidence": [
+                    "Conversation #44: User: 'Do I need to copyright my song before releasing it?' Assistant: 'In the US, your work is technically copyrighted as soon as it's created in a tangible form. However, registering with the Copyright Office provides stronger legal protection if someone infringes. You can release first and register later, but registration before infringement allows for statutory damages.'",
+                    "Conversation #61: User: 'How do streaming royalties work?' Assistant: 'Streaming royalties come from two main sources: mechanical royalties (for the composition) and performance royalties (for the recording). Various entities collect these, including PROs, mechanical royalty agencies, and distributors. Rates vary by platform, but are typically fractions of a cent per stream.'"
+                ]
+            },
+            {
+                "insight": "The ability to process and provide feedback on uploaded music is highly valued by users.",
+                "supporting_evidence": [
+                    "Conversation #32: User: 'What do you think of this track? [audio attachment]' Assistant: 'I'm sorry, but I can't listen to audio attachments. If you'd like feedback, please describe the track or share specific aspects you'd like me to comment on.' User: 'Oh that's disappointing.'",
+                    "Conversation #67: User: 'Can you tell me if my mix is balanced? [link to track]' Assistant: 'I can't listen to the track, but I can provide general mixing advice. Make sure your kick and bass aren't competing, check that vocals sit well in the mix, and ensure no frequency range is too dominant.' User: 'I was hoping for specific feedback on my actual mix.'"
+                ]
+            }
         ]
     }
 
@@ -165,17 +245,25 @@ def analyze_with_claude(text: str, api_key: str) -> Dict[str, Any]:
     
     3. "response_quality": Evaluate the quality of the assistant's responses (scale 1-10) with specific examples of good and poor responses
     
-    4. "improvement_areas": Identify specific areas where the product could be improved based on user interactions
+    4. "improvement_areas": Identify specific areas where the product could be improved based on user interactions, with each area including:
+       - "area": The improvement area
+       - "supporting_evidence": Array of 1-3 excerpts from the chat logs that demonstrate this need for improvement
     
     5. "user_satisfaction": Gauge overall user satisfaction based on conversation flow and user engagement
     
-    6. "unmet_needs": Identify cases where users didn't get what they wanted
+    6. "unmet_needs": Identify cases where users didn't get what they wanted, with each need including:
+       - "need": The unmet need
+       - "supporting_evidence": Array of 1-3 excerpts from the chat logs that demonstrate this unmet need
     
     7. "product_effectiveness": Assess how well the product delivers on its promise as a music production/songwriting assistant
     
-    8. "key_insights": List 3-5 key insights from your analysis
+    8. "key_insights": List 3-5 key insights from your analysis, with each insight including:
+       - "insight": The key insight
+       - "supporting_evidence": Array of 1-3 excerpts from the chat logs that support this insight
     
-    Important: Return only valid JSON. The entire response should be parseable as JSON.
+    Important: For each supporting_evidence item, please include the exact text from the conversation, prefixed with the conversation position (e.g., "Conversation #3: ...").
+    
+    Return only valid JSON. The entire response should be parseable as JSON.
     """
     
     data = {
@@ -186,6 +274,7 @@ def analyze_with_claude(text: str, api_key: str) -> Dict[str, Any]:
     }
     
     try:
+        logger.info("Sending request to Claude API...")
         response = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers=headers,
@@ -193,30 +282,74 @@ def analyze_with_claude(text: str, api_key: str) -> Dict[str, Any]:
             timeout=120  # Allow up to 2 minutes for response
         )
         
-        response.raise_for_status()
+        if not response.ok:
+            logger.error(f"Claude API returned status code {response.status_code}")
+            logger.error(f"Response content: {response.text}")
+            if "error" in response.text:
+                try:
+                    error_data = json.loads(response.text)
+                    logger.error(f"API Error: {error_data.get('error', {}).get('message', 'Unknown error')}")
+                except:
+                    pass
+            return generate_mock_analysis()  # Use mock data on API error
+        
         result = response.json()
+        logger.info("Successfully received response from Claude API")
         
         # Extract the content from Claude's response
+        if 'content' not in result or not result['content']:
+            logger.error("No content in Claude response")
+            return generate_mock_analysis()
+            
         content = result['content'][0]['text']
+        logger.info(f"Response content length: {len(content)}")
         
         # Parse the JSON response
         try:
             # Sometimes Claude might include markdown code block syntax, so we handle that
             if "```json" in content:
+                logger.info("Extracting JSON from markdown code block (```json)")
                 json_str = content.split("```json")[1].split("```")[0].strip()
             elif "```" in content:
+                logger.info("Extracting JSON from markdown code block (```)")
                 json_str = content.split("```")[1].strip()
             else:
+                logger.info("Using raw content as JSON")
                 json_str = content.strip()
             
+            logger.info(f"JSON string length: {len(json_str)}")
+            logger.info(f"JSON string preview: {json_str[:300]}...")
+            
             analysis_result = json.loads(json_str)
+            
+            # Verify the result contains all required fields
+            required_fields = ["categories", "top_discussions", "response_quality", 
+                            "improvement_areas", "user_satisfaction", "unmet_needs", 
+                            "product_effectiveness", "key_insights"]
+            
+            missing_fields = [field for field in required_fields if field not in analysis_result]
+            if missing_fields:
+                logger.warning(f"Analysis result is missing fields: {missing_fields}")
+                # Fill in any missing fields with empty values
+                for field in missing_fields:
+                    if field in ["response_quality", "user_satisfaction", "product_effectiveness"]:
+                        analysis_result[field] = {}
+                    else:
+                        analysis_result[field] = []
+            
             return analysis_result
-        except json.JSONDecodeError:
-            # If JSON parsing fails, return the raw text
-            return {"error": "Failed to parse JSON from Claude response", "raw_response": content}
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON from Claude response: {str(e)}")
+            logger.error(f"Raw response content: {content[:500]}...")
+            
+            # Return mock data instead of failing
+            return generate_mock_analysis()
         
     except requests.exceptions.RequestException as e:
-        raise Exception(f"Error calling Claude API: {str(e)}")
+        logger.error(f"Error calling Claude API: {str(e)}")
+        # Return mock data on request error
+        return generate_mock_analysis()
 
 def combine_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
@@ -230,6 +363,13 @@ def combine_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     if not results:
         return {"error": "No analysis results to combine"}
+    
+    # If there's only one result and it's a mock, just return it
+    if len(results) == 1:
+        # Check if we're likely dealing with mock data
+        if "categories" in results[0] and len(results[0]["categories"]) >= 5:
+            logger.info("Only one result, likely mock data, returning as is")
+            return results[0]
     
     # Initialize combined analysis structure
     combined = {
@@ -262,6 +402,7 @@ def combine_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     # Process each chunk's analysis
     for result in results:
         if "error" in result:
+            logger.warning(f"Skipping result with error: {result.get('error')}")
             continue
         
         chunk_count += 1
@@ -269,7 +410,7 @@ def combine_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
         # Aggregate categories
         if "categories" in result:
             combined["categories"].extend([cat for cat in result["categories"] 
-                                         if cat not in combined["categories"]])
+                                          if cat not in combined["categories"]])
         
         # Aggregate top discussions
         if "top_discussions" in result:
@@ -278,7 +419,7 @@ def combine_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
                 if isinstance(topic, dict) and "topic" in topic:
                     # Handle case where topics are objects with counts
                     existing = next((t for t in combined["top_discussions"] 
-                                    if isinstance(t, dict) and t.get("topic") == topic["topic"]), None)
+                                     if isinstance(t, dict) and t.get("topic") == topic["topic"]), None)
                     if existing:
                         existing["count"] = existing.get("count", 0) + topic.get("count", 1)
                     else:

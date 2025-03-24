@@ -6,6 +6,7 @@ import sys
 import logging
 from flask import Flask, render_template, request, jsonify, session
 from werkzeug.utils import secure_filename
+from flask_cors import CORS  # Import CORS
 import text_processor
 import claude_analyzer
 import json
@@ -57,11 +58,13 @@ def add_log(message, level="info"):
 
 # Initialize Flask app
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 app.secret_key = os.environ.get('SECRET_KEY', 'dev_key_for_testing')
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['TEMP_FOLDER'] = 'temp_chunks'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max upload
 app.config['ALLOWED_EXTENSIONS'] = {'txt', 'rtf'}
+app.config['MAX_CHUNKS'] = int(os.environ.get('MAX_CHUNKS', 1))  # Default to analyzing just 1 chunk for testing
 
 # Create necessary directories if they don't exist
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -195,14 +198,21 @@ def analyze():
         use_mock = True
         add_log("Using MOCK DATA mode since no valid API key was provided", "warning")
     
+    # Get max_chunks from config
+    max_chunks = app.config['MAX_CHUNKS']
+    if max_chunks > 0 and max_chunks < len(chunks):
+        add_log(f"TESTING MODE: Limiting analysis to {max_chunks} of {len(chunks)} chunks", "warning")
+    else:
+        max_chunks = None  # Process all chunks
+    
     # Analyze chunks with Claude
     try:
-        add_log(f"Starting analysis of {len(chunks)} chunks with Claude AI")
+        add_log(f"Starting analysis of chunks with Claude AI")
         start_time = time.time()
         
         # We'll handle the Claude analyzer output ourselves to avoid duplicate logging
         with FunctionLoggingDisabled():
-            results = claude_analyzer.analyze_chunks(chunks, claude_api_key, use_mock)
+            results = claude_analyzer.analyze_chunks(chunks, claude_api_key, use_mock, max_chunks)
             
         analysis_time = time.time() - start_time
         add_log(f"Analysis completed in {analysis_time:.2f} seconds")
@@ -263,5 +273,5 @@ def get_results(filename):
     return jsonify(analysis)
 
 if __name__ == '__main__':
-    add_log("Starting HitCraft Chat Analyzer server")
-    app.run(debug=True)
+    logging.info("Starting HitCraft Chat Analyzer server")
+    app.run(host='0.0.0.0', port=8090, debug=True)

@@ -172,6 +172,30 @@
             display: none;
             margin-top: 1rem;
         }
+        .clickable-insight {
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .clickable-insight:hover {
+            background-color: #f0f7ff;
+        }
+        .clickable-indicator {
+            font-size: 0.8rem;
+            color: #0d6efd;
+            font-style: italic;
+        }
+        .chat-evidence {
+            background-color: #f8f9fa;
+            border-radius: 0.5rem;
+            padding: 1.5rem;
+            border-left: 4px solid #6c757d;
+            margin-bottom: 1rem;
+        }
+        .conversation-title {
+            font-weight: bold;
+            color: #495057;
+            margin-bottom: 0.5rem;
+        }
     </style>
 </head>
 <body>
@@ -388,6 +412,24 @@
         </div>
     </div>
 
+    <!-- Modal for displaying evidence -->
+    <div class="modal fade" id="evidenceModal" tabindex="-1" aria-labelledby="evidenceModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="evidenceModalLabel">Supporting Evidence</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="evidenceContent"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', function() {
@@ -576,7 +618,30 @@
                     analysis.key_insights.forEach(insight => {
                         const insightElem = document.createElement('div');
                         insightElem.className = 'key-insight';
-                        insightElem.textContent = insight;
+                        
+                        // Handle both string and object formats (for backward compatibility)
+                        if (typeof insight === 'object' && insight.insight) {
+                            insightElem.textContent = insight.insight;
+                            
+                            // If there's supporting evidence, make it clickable
+                            if (insight.supporting_evidence && insight.supporting_evidence.length) {
+                                insightElem.classList.add('clickable-insight');
+                                insightElem.title = 'Click to view supporting evidence';
+                                insightElem.onclick = function() {
+                                    showEvidence(insight.insight, insight.supporting_evidence);
+                                };
+                                
+                                // Add a small indicator that this is clickable
+                                const indicatorElem = document.createElement('small');
+                                indicatorElem.className = 'clickable-indicator';
+                                indicatorElem.innerHTML = '[Click to view examples]';
+                                insightElem.appendChild(document.createElement('br'));
+                                insightElem.appendChild(indicatorElem);
+                            }
+                        } else {
+                            insightElem.textContent = insight;
+                        }
+                        
                         keyInsightsElem.appendChild(insightElem);
                     });
                 } else {
@@ -696,7 +761,30 @@
                     
                     analysis.improvement_areas.forEach(area => {
                         const listItem = document.createElement('li');
-                        listItem.textContent = area;
+                        
+                        // Handle both string and object formats
+                        if (typeof area === 'object' && area.area) {
+                            listItem.textContent = area.area;
+                            
+                            // If there's supporting evidence, make it clickable
+                            if (area.supporting_evidence && area.supporting_evidence.length) {
+                                listItem.classList.add('clickable-insight');
+                                listItem.title = 'Click to view supporting evidence';
+                                listItem.onclick = function() {
+                                    showEvidence(area.area, area.supporting_evidence);
+                                };
+                                
+                                // Add a small indicator that this is clickable
+                                const indicatorElem = document.createElement('small');
+                                indicatorElem.className = 'clickable-indicator';
+                                indicatorElem.innerHTML = '[Click to view examples]';
+                                listItem.appendChild(document.createElement('br'));
+                                listItem.appendChild(indicatorElem);
+                            }
+                        } else {
+                            listItem.textContent = area;
+                        }
+                        
                         listElem.appendChild(listItem);
                     });
                     
@@ -714,7 +802,30 @@
                     
                     analysis.unmet_needs.forEach(need => {
                         const listItem = document.createElement('li');
-                        listItem.textContent = need;
+                        
+                        // Handle both string and object formats
+                        if (typeof need === 'object' && need.need) {
+                            listItem.textContent = need.need;
+                            
+                            // If there's supporting evidence, make it clickable
+                            if (need.supporting_evidence && need.supporting_evidence.length) {
+                                listItem.classList.add('clickable-insight');
+                                listItem.title = 'Click to view supporting evidence';
+                                listItem.onclick = function() {
+                                    showEvidence(need.need, need.supporting_evidence);
+                                };
+                                
+                                // Add a small indicator that this is clickable
+                                const indicatorElem = document.createElement('small');
+                                indicatorElem.className = 'clickable-indicator';
+                                indicatorElem.innerHTML = '[Click to view examples]';
+                                listItem.appendChild(document.createElement('br'));
+                                listItem.appendChild(indicatorElem);
+                            }
+                        } else {
+                            listItem.textContent = need;
+                        }
+                        
                         listElem.appendChild(listItem);
                     });
                     
@@ -760,6 +871,56 @@
                 } else {
                     negativeIndicatorsElem.innerHTML = '<li class="text-muted">No negative indicators available.</li>';
                 }
+            }
+            
+            // Function to show evidence in modal
+            function showEvidence(title, evidenceItems) {
+                // Set the modal title
+                const modalTitle = document.getElementById('evidenceModalLabel');
+                modalTitle.textContent = 'Evidence: ' + title;
+                
+                // Populate the evidence content
+                const evidenceContent = document.getElementById('evidenceContent');
+                evidenceContent.innerHTML = '';
+                
+                if (evidenceItems && evidenceItems.length) {
+                    evidenceItems.forEach((item, index) => {
+                        const evidenceElem = document.createElement('div');
+                        evidenceElem.className = 'chat-evidence mb-3 p-3 border-bottom';
+                        
+                        // Format the evidence with styling
+                        const formattedText = formatChatEvidence(item);
+                        evidenceElem.innerHTML = formattedText;
+                        
+                        evidenceContent.appendChild(evidenceElem);
+                    });
+                } else {
+                    evidenceContent.innerHTML = '<p class="text-muted">No supporting evidence available.</p>';
+                }
+                
+                // Show the modal
+                const evidenceModal = new bootstrap.Modal(document.getElementById('evidenceModal'));
+                evidenceModal.show();
+            }
+            
+            // Function to format chat evidence with styling
+            function formatChatEvidence(text) {
+                // Split into parts for "Conversation #X: " prefix
+                const conversationMatch = text.match(/^(Conversation #\d+:)\s(.*)/);
+                
+                if (conversationMatch) {
+                    const prefix = conversationMatch[1];
+                    const content = conversationMatch[2];
+                    
+                    // Further format the content to highlight user vs assistant
+                    const formattedContent = content
+                        .replace(/User:/g, '<strong class="text-primary">User:</strong>')
+                        .replace(/Assistant:/g, '<strong class="text-success">Assistant:</strong>');
+                    
+                    return `<div class="conversation-title text-secondary mb-2">${prefix}</div>${formattedContent}`;
+                }
+                
+                return text;
             }
             
             // Initialize analysis progress counter
