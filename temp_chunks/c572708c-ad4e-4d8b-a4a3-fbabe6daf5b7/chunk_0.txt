@@ -1,0 +1,160 @@
+========== THREAD: ×©×™×—×” ×¢×œ × ×’×™× ×” ×‘××•×–×™×§×” ==========
+âœ… Export complete! Created collection: "ThreadMessagesExport_2025-03-20T16_15_25_953Z"
+Collection contains threads from: 2025-03-06T16:07:16.094Z
+DeprecationWarning: Collection.count() is deprecated. Use countDocuments or estimatedDocumentCount.
+Number of threads exported: 2057
+
+Sample of the data from ThreadMessagesExport_2025-03-20T16_15_25_953Z (first 3 threads):
+{
+  _id: ObjectId('67dc3f2141525061ed63e540'),
+  messageCount: 4,
+  messages: [
+    {
+      id: ObjectId('67dc3efe9637d32bb8dbe4fa'),
+      content: [Array],
+      role: 'user',
+      createdAt: 2025-03-20T16:14:54.528Z,
+      userId: ObjectId('67c13ce3c2f3481197ae6fed')
+    },
+    {
+      id: ObjectId('67dc3ee09637d32bb8dbe4eb'),
+      content: [Array],
+      role: 'user',
+      createdAt: 2025-03-20T16:14:24.576Z,
+      userId: ObjectId('67c13ce3c2f3481197ae6fed')
+    },
+    {
+      id: ObjectId('67dc3ee69637d32bb8dbe4f1'),
+      content: [Array],
+      role: 'assistant',
+      createdAt: 2025-03-20T16:14:30.355Z,
+      userId: ObjectId('67c13ce3c2f3481197ae6fed')
+    },
+    {
+      id: ObjectId('67dc3f029637d32bb8dbe500'),
+      content: [Array],
+      role: 'assistant',
+      createdAt: 2025-03-20T16:14:58.624Z,
+      userId: ObjectId('67c13ce3c2f3481197ae6fed')
+    }
+  ],
+  firstMessageDate: 2025-03-20T16:14:24.576Z,
+  lastMessageDate: 2025-03-20T16:14:58.624Z,
+  threadId: ObjectId('67dc3ee09637d32bb8dbe4e1'),
+  threadTitle: 'Calm Music for Shabad Kirtan',
+  threadStatus: 'active',
+  threadCreatedAt: 2025-03-20T16:14:24.099Z,
+  artistId: ObjectId('67618ad67dc13643acff6a25')
+}
+{
+  _id: ObjectId('67dc3f2141525061ed63e542'),
+  messageCount: 10,
+  messages: [
+    {
+      id: ObjectId('67dc33ed9637d32bb8dbe290'),
+      content: [Array],
+      role: 'assistant',
+      createdAt: 2025-03-20T15:27:41.157Z,
+      userId: ObjectId('67dc32619637d32bb8dbe198')
+    },
+    {
+      id: ObjectId('67dc343d9637d32bb8dbe2b2'),
+      content: [Array],
+      role: 'user',
+      createdAt: 2025-03-20T15:29:01.173Z,
+      userId: ObjectId('67dc32619637d32bb8dbe198')
+    },
+    {
+      id: ObjectId('67dc32ad9637d32bb8dbe1df'),
+      content: [Array],
+      role: 'user',
+      createdAt: 2025-03-20T15:22:21.670Z,
+      userId: ObjectId('67dc32619637d32bb8dbe198')
+    },
+    {
+      id: ObjectId('67dc33809637d32bb8dbe21a'),
+      content: [Array],
+      role: 'user',
+      createdAt: 2025-03-20T15:25:52.646Z,
+      userId: ObjectId('67dc32619637d32bb8dbe198')
+    },
+    {
+      id: ObjectId('67dc34129637d32bb8dbe2a6'),
+      content: [Array],
+      role: 'assistant',
+      createdAt: 2025-03-20T15:28:18.256Z,
+      userId: ObjectId('67dc32619637d32bb8dbe198')
+    },
+    {
+      id: ObjectId('67dc34089637d32bb8dbe29d'),
+      content: [Array],
+      role: 'user',
+      createdAt: 2025-03-20T15:28:08.853Z,
+      userId: ObjectId('67dc32619637d32bb8dbe198')
+    },
+    {
+      id: ObjectId('67dc33809637d32bb8dbe223'),
+      content: [Array],
+      role: 'assistant',
+      createdAt: 2025-03-20T15:25:52.838Z,
+      userId: ObjectId('67dc32619637d32bb8dbe198')
+    },
+    {
+      id: ObjectId('67dc343f9637d32bb8dbe2be'),
+      content: [Array],
+      role: 'assistant',
+      createdAt: 2025-03-20T15:29:03.352Z,
+      userId: ObjectId('67dc32619637d32bb8dbe198')
+    },
+    {
+      id: ObjectId('67dc32b19637d32bb8dbe1e5'),
+      content: [Array],
+      role: 'assistant',
+      createdAt: 2025-03-20T15:22:25.469Z,
+      userId: ObjectId('67dc32619637d32bb8dbe198')
+    },
+    {
+      id: ObjectId('67dc357d9637d32bb8dbe428'),
+      content: [Array],
+      role: 'assistant',
+      createdAt: 2025-03-20T15:34:21.522Z,
+      userId: ObjectId('67dc32619637d32bb8dbe198')
+    }
+  ],
+  firstMessageDate: 2025-03-20T15:22:21.670Z,
+  lastMessageDate: 2025-03-20T15:34:21.522Z,
+  threadId: ObjectId('67dc32ad9637d32bb8dbe1d5'),
+  threadTitle: 'Polishing My Demo Into a Hit',
+  threadStatus: 'active',
+  threadCreatedAt: 2025-03-20T15:22:21.094Z,
+  artistId: ObjectId('67618ad67dc13643acff6a25')
+}
+{
+  _id: ObjectId('67dc3f2141525061ed63e60c'),
+  messageCount: 2,
+  messages: [
+    {
+      id: ObjectId('67d9d1596edb73a16509b75e'),
+      content: [Array],
+      role: 'user',
+      createdAt: 2025-03-18T20:02:33.172Z,
+      userId: ObjectId('67d96ab1f4e4da5cab93ac68')
+    },
+    {
+      id: ObjectId('67d9d1616edb73a16509b765'),
+      content: [Array],
+      role: 'assistant',
+      createdAt: 2025-03-18T20:02:41.006Z,
+      userId: ObjectId('67d96ab1f4e4da5cab93ac68')
+    }
+  ],
+  firstMessageDate: 2025-03-18T20:02:33.172Z,
+  lastMessageDate: 2025-03-18T20:02:41.006Z,
+  threadId: ObjectId('67d9d1576edb73a16509b754'),
+  threadTitle: 'Learning DAW Shortcuts',
+  threadStatus: 'active',
+  threadCreatedAt: 2025-03-18T20:02:31.775Z,
+  artistId: ObjectId('67618ad67dc13643acff6a25')
+}
+========== END THREAD ==========
+
