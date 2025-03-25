@@ -80,11 +80,47 @@ def generate_mock_analysis() -> Dict[str, Any]:
             "Genre Exploration"
         ],
         "top_discussions": [
-            {"topic": "Song Structure Development", "count": 8},
-            {"topic": "Genre Transformation", "count": 7},
-            {"topic": "Lyric Writing", "count": 6},
-            {"topic": "Production References", "count": 5},
-            {"topic": "Music Licensing", "count": 4}
+            {
+                "topic": "Song Structure Development", 
+                "count": 8,
+                "instances": [
+                    {"context": "User: How do I structure a verse-chorus-verse song?\nAssistant: A typical structure would be intro, verse, chorus, verse, chorus, bridge, chorus, outro. Each section serves a specific purpose in the song's narrative."},
+                    {"context": "User: What's the difference between a bridge and a pre-chorus?\nAssistant: A pre-chorus builds tension leading into the chorus, while a bridge provides contrast and typically appears once after the second chorus."},
+                    {"context": "User: How long should my verses be compared to my chorus?\nAssistant: Verses are typically longer than choruses. Aim for 16-24 bars for verses and 8-16 bars for choruses, but there are no strict rules."}
+                ]
+            },
+            {
+                "topic": "Genre Transformation", 
+                "count": 7,
+                "instances": [
+                    {"context": "User: How can I turn my folk song into something more electronic?\nAssistant: Try maintaining the core melody and lyrics while introducing electronic drums, synthesizers, and digital effects. Start by replacing acoustic instruments with electronic equivalents."},
+                    {"context": "User: What defines lo-fi hip hop compared to regular hip hop?\nAssistant: Lo-fi hip hop typically features deliberately imperfect sounds, vinyl crackle, muffled drums, jazz samples, and a relaxed tempo around 70-85 BPM."}
+                ]
+            },
+            {
+                "topic": "Lyric Writing", 
+                "count": 6,
+                "instances": [
+                    {"context": "User: I'm stuck writing lyrics for my chorus. Any tips?\nAssistant: Focus on a strong, memorable hook that captures your song's essence. Use more universal language in choruses and save detailed storytelling for verses."},
+                    {"context": "User: How do I write lyrics that aren't cliche?\nAssistant: Use specific, concrete details instead of generalizations. Draw from personal experiences and try unexpected metaphors or perspectives on familiar topics."}
+                ]
+            },
+            {
+                "topic": "Production References", 
+                "count": 5,
+                "instances": [
+                    {"context": "User: How do I get that Daft Punk sound in my production?\nAssistant: Daft Punk's sound involves vocoder/talkbox effects on vocals, funk-inspired bass lines, classic drum machine sounds (TR-808/909), and sidechained compression for that 'pumping' effect."},
+                    {"context": "User: What plugins would help me sound like Radiohead?\nAssistant: For Radiohead's sound, try plugins like Valhalla VintageVerb for spacious reverbs, delay plugins with filtering options, and granular effects for those experimental textures they're known for."}
+                ]
+            },
+            {
+                "topic": "Music Licensing", 
+                "count": 4,
+                "instances": [
+                    {"context": "User: Do I need a license to use a sample in my track?\nAssistant: Yes, you typically need to clear both the master recording rights (from the label) and the composition rights (from the publisher/songwriter) when using samples commercially."},
+                    {"context": "User: How do royalties work for streaming?\nAssistant: Streaming royalties come from mechanical royalties (for the composition) and performance royalties (for the recording). Various entities collect these, including PROs, mechanical royalty agencies, and distributors. Rates vary by platform, but are typically fractions of a cent per stream."}
+                ]
+            }
         ],
         "response_quality": {
             "average_score": 8.5,
@@ -208,7 +244,43 @@ def generate_mock_analysis() -> Dict[str, Any]:
                     "Conversation #67: User: 'Can you tell me if my mix is balanced? [link to track]' Assistant: 'I can't listen to the track, but I can provide general mixing advice. Make sure your kick and bass aren't competing, check that vocals sit well in the mix, and ensure no frequency range is too dominant.' User: 'I was hoping for specific feedback on my actual mix.'"
                 ]
             }
-        ]
+        ],
+        "negative_chats": {
+            "categories": [
+                {
+                    "category": "Feature Unavailable",
+                    "count": 8,
+                    "examples": [
+                        {"context": "Conversation #32: User: 'What do you think of this track? [audio attachment]' Assistant: 'I'm sorry, but I can't listen to audio attachments. If you'd like feedback, please describe the track or share specific aspects you'd like me to comment on.' User: 'Oh that's disappointing.'"},
+                        {"context": "Conversation #67: User: 'Can you tell me if my mix is balanced? [link to track]' Assistant: 'I can't listen to the track, but I can provide general mixing advice. Make sure your kick and bass aren't competing, check that vocals sit well in the mix, and ensure no frequency range is too dominant.' User: 'I was hoping for specific feedback on my actual mix.'"}
+                    ]
+                },
+                {
+                    "category": "Accuracy Problems",
+                    "count": 5,
+                    "examples": [
+                        {"context": "Conversation #43: User: 'What's the difference between a compressor and a limiter?' Assistant: 'A compressor reduces the dynamic range of an audio signal, while a limiter prevents the signal from exceeding a certain threshold.' User: 'That's not entirely accurate. A limiter is essentially a compressor with a very high ratio, not just a threshold preventer.'"},
+                        {"context": "Conversation #51: User: 'How do I use parallel compression?' Assistant: 'Parallel compression is when you blend a dry signal with a heavily compressed version of the same signal.' User: 'That's close, but not quite right. Parallel compression is specifically about blending a compressed signal with the uncompressed original to maintain transients while adding density.'"}
+                    ]
+                },
+                {
+                    "category": "Technical Issues",
+                    "count": 3,
+                    "examples": [
+                        {"context": "Conversation #19: User: 'I'm getting an error when trying to upload my track.' Assistant: 'Sorry to hear that. Can you please try again or provide more details about the error?' User: 'I've tried three times now. It just keeps failing.'"},
+                        {"context": "Conversation #28: User: 'The app crashed when I was in the middle of working on my song structure.' Assistant: 'I apologize for the inconvenience. Please try restarting the application.' User: 'I did and lost all my work!'"}
+                    ]
+                },
+                {
+                    "category": "Lack of Specificity",
+                    "count": 7,
+                    "examples": [
+                        {"context": "Conversation #37: User: 'What plugins should I use to get a professional sound?' Assistant: 'There are many excellent plugins for achieving a professional sound, including EQs, compressors, reverbs, and mastering tools from reputable brands.' User: 'I was hoping for specific recommendations, not just categories.'"},
+                        {"context": "Conversation #72: User: 'How do I make my drums hit harder?' Assistant: 'To make drums hit harder, focus on compression, EQ, and saturation techniques that enhance transients and add weight to the sound.' User: 'That's too vague to be helpful.'"}
+                    ]
+                }
+            ]
+        }
     }
 
 def analyze_with_claude(text: str, api_key: str) -> Dict[str, Any]:
@@ -241,8 +313,12 @@ def analyze_with_claude(text: str, api_key: str) -> Dict[str, Any]:
     
     1. "categories": List the main categories of conversations you observe (e.g., song production, music theory, etc.)
     
-    2. "top_discussions": Identify the top 5 most common discussion topics, with counts if possible
-    
+    2. "top_discussions": Identify the top 5 most common discussion topics, each containing:
+       - "topic": The topic name
+       - "count": How many times this topic appears
+       - "instances": Array of 2-3 excerpts from the chat logs that are examples of this topic, each with:
+          - "context": The relevant conversation text showing this topic
+
     3. "response_quality": Evaluate the quality of the assistant's responses (scale 1-10) with specific examples of good and poor responses
     
     4. "improvement_areas": Identify specific areas where the product could be improved based on user interactions, with each area including:
@@ -261,7 +337,14 @@ def analyze_with_claude(text: str, api_key: str) -> Dict[str, Any]:
        - "insight": The key insight
        - "supporting_evidence": Array of 1-3 excerpts from the chat logs that support this insight
     
-    Important: For each supporting_evidence item, please include the exact text from the conversation, prefixed with the conversation position (e.g., "Conversation #3: ...").
+    9. "negative_chats": Categorize conversations where users express dissatisfaction, organized by issue type:
+       - "categories": Array of objects, each containing:
+          - "category": Name of the issue category (e.g., "Feature Unavailable", "Accuracy Problems", "Technical Issues")
+          - "count": Number of conversations in this category
+          - "examples": Array of excerpts from conversations showing this issue, each with:
+             - "context": The conversation text showing user dissatisfaction
+    
+    Important: For each supporting_evidence item or instance context, please include the exact text from the conversation, prefixed with the conversation position (e.g., "Conversation #3: ...").
     
     Return only valid JSON. The entire response should be parseable as JSON.
     """
@@ -306,8 +389,19 @@ def analyze_with_claude(text: str, api_key: str) -> Dict[str, Any]:
         
         # Parse the JSON response
         try:
+            # Claude often adds text before the JSON like "Here is the analysis in JSON format:"
+            # Let's try to find the first { character and parse from there
+            json_start = content.find('{')
+            if json_start >= 0:
+                logger.info(f"Found JSON starting at position {json_start}")
+                json_str = content[json_start:].strip()
+                
+                # Find the last } to get the complete JSON object
+                json_end = json_str.rfind('}')
+                if json_end >= 0:
+                    json_str = json_str[:json_end+1]
             # Sometimes Claude might include markdown code block syntax, so we handle that
-            if "```json" in content:
+            elif "```json" in content:
                 logger.info("Extracting JSON from markdown code block (```json)")
                 json_str = content.split("```json")[1].split("```")[0].strip()
             elif "```" in content:
@@ -325,7 +419,7 @@ def analyze_with_claude(text: str, api_key: str) -> Dict[str, Any]:
             # Verify the result contains all required fields
             required_fields = ["categories", "top_discussions", "response_quality", 
                             "improvement_areas", "user_satisfaction", "unmet_needs", 
-                            "product_effectiveness", "key_insights"]
+                            "product_effectiveness", "key_insights", "negative_chats"]
             
             missing_fields = [field for field in required_fields if field not in analysis_result]
             if missing_fields:
@@ -392,7 +486,10 @@ def combine_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
             "strengths": [],
             "weaknesses": []
         },
-        "key_insights": []
+        "key_insights": [],
+        "negative_chats": {
+            "categories": []
+        }
     }
     
     # Counter for averaging scores
@@ -524,6 +621,14 @@ def combine_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
                 [insight for insight in result["key_insights"] 
                  if insight not in combined["key_insights"]]
             )
+        
+        # Aggregate negative chats
+        if "negative_chats" in result:
+            if isinstance(result["negative_chats"], dict) and "categories" in result["negative_chats"]:
+                combined["negative_chats"]["categories"].extend(
+                    [cat for cat in result["negative_chats"]["categories"] 
+                     if cat not in combined["negative_chats"]["categories"]]
+                )
     
     # Calculate average response quality score
     if quality_scores:

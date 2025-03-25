@@ -2,10 +2,10 @@ import re
 import os
 import chardet
 from striprtf.striprtf import rtf_to_text
+from typing import List
 
 # Maximum chunk size in characters that Claude can handle
-# This is an estimate and can be adjusted based on Claude's actual limits
-MAX_CHUNK_SIZE = 100000  # ~100K characters
+MAX_CHUNK_SIZE = 100000  # 100K characters - Claude 3 Opus can handle this
 
 def detect_encoding(file_path):
     """Detect the encoding of a file"""
@@ -21,13 +21,23 @@ def read_file(file_path):
     if file_extension == '.rtf':
         try:
             # Read RTF file and convert to plain text
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                rtf_content = f.read()
+            with open(file_path, 'rb') as f:  # Use binary mode to avoid encoding issues
+                rtf_content = f.read().decode('utf-8', errors='ignore')
             return rtf_to_text(rtf_content)
         except Exception as e:
             print(f"Error processing RTF file: {e}")
-            # Fallback to regular text processing
-            pass
+            # Try alternative approach for RTF handling
+            try:
+                with open(file_path, 'rb') as f:
+                    rtf_content = f.read()
+                # Try to detect encoding first
+                detected_encoding = chardet.detect(rtf_content)['encoding'] or 'utf-8'
+                rtf_content = rtf_content.decode(detected_encoding, errors='ignore')
+                return rtf_to_text(rtf_content)
+            except Exception as e2:
+                print(f"Alternative RTF processing also failed: {e2}")
+                # Let the exception propagate to be caught by the caller
+                raise ValueError(f"Failed to process RTF file: {e}, then: {e2}")
     
     # For regular text files or as fallback
     try:
@@ -37,146 +47,88 @@ def read_file(file_path):
     except Exception as e:
         print(f"Error reading file: {e}")
         # Last resort - try with utf-8
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-            return f.read()
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                return f.read()
+        except Exception as e2:
+            raise ValueError(f"Failed to read file with any encoding method: {e}, then: {e2}")
 
-def chunk_file(file_path):
-    """Break a large file into chunks for Claude analysis"""
-    text = read_file(file_path)
-    print(f"Read file: {file_path}, size: {len(text)} characters")
+def create_chunks(text: str, preserve_thread_boundaries: bool = True) -> List[str]:
+    """
+    Split a text into chunks of maximum size, respecting thread boundaries if specified.
     
-    # Try multiple different thread boundary patterns
-    thread_patterns = [
-        # Original pattern
-        r'==========\s+THREAD:.*?==========\s+END\s+THREAD\s+==========\s+',
-        # Alternative patterns for different chat log formats
-        r'Thread ID:\s*\w+.*?(?=Thread ID:|$)',
-        r'ThreadId:.*?(?=ThreadId:|$)',
-        r'Conversation: \d+.*?(?=Conversation: \d+|$)'
-    ]
-    
-    threads = []
-    for pattern in thread_patterns:
-        print(f"Trying thread pattern: {pattern}")
-        threads = re.split(pattern, text, flags=re.DOTALL)
-        # Remove empty strings
-        threads = [thread.strip() for thread in threads if thread.strip()]
-        if len(threads) > 1:
-            print(f"Found {len(threads)} threads using pattern: {pattern}")
-            break
-    
-    # If we don't have clear thread boundaries, fall back to size-based chunking
-    if len(threads) <= 1:
-        print("No clear thread boundaries found, using size-based chunking")
-        chunks = chunk_by_size(text, MAX_CHUNK_SIZE)
-        print(f"Created {len(chunks)} chunks based on size")
-        return chunks
-    
-    # Combine threads into chunks that respect MAX_CHUNK_SIZE
+    Args:
+        text: Text to split into chunks
+        preserve_thread_boundaries: If True, try to keep threads together
+        
+    Returns:
+        List of text chunks
+    """
+    # If text is smaller than the max chunk size, return it as is
+    if len(text) <= MAX_CHUNK_SIZE:
+        return [text]
+        
     chunks = []
-    current_chunk = ""
-    print(f"Processing {len(threads)} threads into chunks...")
     
-    for i, thread in enumerate(threads):
-        # Try to find the thread header if it was split off
-        thread_header = ""
-        header_match = re.search(r'==========\s+THREAD:.*?==========\s+', text, flags=re.DOTALL)
-        if header_match:
-            thread_header = header_match.group(0)
+    if preserve_thread_boundaries:
+        # Try to preserve thread boundaries by splitting on thread patterns
+        thread_pattern = r'(?:^|\n)Conversation #\d+:'
+        thread_matches = list(re.finditer(thread_pattern, text))
         
-        thread_with_header = f"{thread_header}{thread}\n========== END THREAD ==========\n\n"
-        
-        # If adding this thread exceeds the chunk size, save current chunk and start new one
-        if len(current_chunk) + len(thread_with_header) > MAX_CHUNK_SIZE:
+        # Group threads into chunks that fit within MAX_CHUNK_SIZE
+        if thread_matches:
+            start_idx = 0
+            current_chunk = ""
+            
+            for i, match in enumerate(thread_matches):
+                thread_start = match.start()
+                
+                # Get the thread content (from this thread start to next thread start or end of text)
+                if i < len(thread_matches) - 1:
+                    thread_end = thread_matches[i + 1].start()
+                    thread_content = text[thread_start:thread_end]
+                else:
+                    thread_content = text[thread_start:]
+                
+                # If adding this thread would exceed chunk size and we already have content
+                if len(current_chunk) + len(thread_content) > MAX_CHUNK_SIZE and current_chunk:
+                    # Save current chunk and start a new one
+                    chunks.append(current_chunk)
+                    current_chunk = thread_content
+                else:
+                    # Add this thread to the current chunk
+                    current_chunk += thread_content
+            
+            # Add the last chunk if it has content
             if current_chunk:
                 chunks.append(current_chunk)
+                
+            # If we successfully created chunks, return them
+            if chunks:
+                return chunks
+    
+    # Fallback to simple splitting if thread preservation didn't work well
+    # or if preserve_thread_boundaries is False
+    current_pos = 0
+    while current_pos < len(text):
+        chunk_end = min(current_pos + MAX_CHUNK_SIZE, len(text))
+        
+        # If we're not at the end of the text, try to find a good breaking point
+        if chunk_end < len(text):
+            # Try to find the last paragraph break
+            last_break = text.rfind('\n\n', current_pos, chunk_end)
             
-            # If a single thread is too large, break it into smaller chunks
-            if len(thread_with_header) > MAX_CHUNK_SIZE:
-                thread_chunks = chunk_by_size(thread_with_header, MAX_CHUNK_SIZE)
-                chunks.extend(thread_chunks)
-                current_chunk = ""
+            if last_break > current_pos + MAX_CHUNK_SIZE * 0.8:
+                chunk_end = last_break + 2  # Include the newlines
             else:
-                current_chunk = thread_with_header
-        else:
-            current_chunk += thread_with_header
+                # If no good paragraph break, try with a newline
+                last_break = text.rfind('\n', current_pos, chunk_end)
+                if last_break > current_pos + MAX_CHUNK_SIZE * 0.9:
+                    chunk_end = last_break + 1  # Include the newline
         
-        # Log progress for large numbers of threads
-        if (i+1) % 50 == 0:
-            print(f"Processed {i+1} of {len(threads)} threads")
+        chunks.append(text[current_pos:chunk_end])
+        current_pos = chunk_end
     
-    # Add the last chunk if it's not empty
-    if current_chunk:
-        chunks.append(current_chunk)
-    
-    print(f"Final number of chunks: {len(chunks)}")
-    for i, chunk in enumerate(chunks):
-        print(f"Chunk {i+1} size: {len(chunk)} characters")
-    
-    return chunks
-
-def chunk_by_size(text, max_size):
-    """Split text into chunks of maximum size, trying to break at logical points"""
-    print(f"Breaking text of size {len(text)} characters into chunks of max {max_size} characters")
-    chunks = []
-    
-    while text:
-        if len(text) <= max_size:
-            chunks.append(text)
-            print(f"Added final chunk of size {len(text)} characters")
-            break
-        
-        # Try to find a good breaking point near the max_size
-        # Prefer to break at end of a thread
-        thread_end = text[:max_size].rfind("========== END THREAD ==========")
-        if thread_end != -1 and thread_end > max_size * 0.5:  # Ensure we're not making tiny chunks
-            split_point = thread_end + len("========== END THREAD ==========")
-            chunks.append(text[:split_point])
-            print(f"Split at thread end marker, chunk size: {split_point} characters")
-            text = text[split_point:].strip()
-            continue
-        
-        # Try to find message boundaries in different formats
-        message_markers = [
-            r"\n\s*User:\s*\n",
-            r"\n\s*Assistant:\s*\n",
-            r"\nFrom:\s+.*?\n",
-            r"\nTo:\s+.*?\n",
-            r"\n\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2}\s*\n"  # Date/time markers
-        ]
-        
-        for marker in message_markers:
-            matches = list(re.finditer(marker, text[:max_size], re.DOTALL))
-            if matches and len(matches) > 0:
-                # Use the last match as a split point if it's not too close to the beginning
-                last_match = matches[-1]
-                if last_match.start() > max_size * 0.6:
-                    chunks.append(text[:last_match.start()])
-                    print(f"Split at message boundary, chunk size: {last_match.start()} characters")
-                    text = text[last_match.start():].strip()
-                    break
-        else:  # This else belongs to the for loop, executes if no break occurred
-            # Otherwise, try to break at a paragraph boundary
-            paragraph = text[:max_size].rfind("\n\n")
-            if paragraph != -1 and paragraph > max_size * 0.7:  # Ensure decent chunk size
-                chunks.append(text[:paragraph])
-                print(f"Split at paragraph, chunk size: {paragraph} characters")
-                text = text[paragraph:].strip()
-                continue
-            
-            # Last resort: break at a line boundary
-            line = text[:max_size].rfind("\n")
-            if line != -1 and line > max_size * 0.8:
-                chunks.append(text[:line])
-                print(f"Split at line break, chunk size: {line} characters")
-                text = text[line:].strip()
-            else:
-                # If all else fails, just break at max_size
-                chunks.append(text[:max_size])
-                print(f"Split at max size, chunk size: {max_size} characters")
-                text = text[max_size:].strip()
-    
-    print(f"Created {len(chunks)} chunks from text")
     return chunks
 
 def clean_chunk(chunk):
@@ -192,3 +144,33 @@ def clean_chunk(chunk):
         chunk = chunk + "\n\n========== CHUNK END =========="
     
     return chunk
+
+def process_file(file_path: str) -> List[str]:
+    """
+    Process a text file into chunks for analysis.
+    
+    Args:
+        file_path: Path to the text file
+        
+    Returns:
+        List of chunks
+    """
+    # Read the file content
+    text = read_file(file_path)
+    
+    # Simple validation
+    if not text or len(text) < 10:
+        return []
+    
+    # Format as chat log with markers
+    formatted_text = f"===== CHAT LOG =====\n\n{text}\n\n===== END CHAT LOG =====\n"
+    
+    # Create chunks from the formatted text
+    chunks = create_chunks(formatted_text)
+    
+    # Print stats about the chunks
+    total_size = sum(len(chunk) for chunk in chunks)
+    avg_size = total_size / len(chunks) if chunks else 0
+    print(f"Created {len(chunks)} chunks, Total size: {total_size}, Average chunk size: {avg_size:.0f}")
+    
+    return chunks
