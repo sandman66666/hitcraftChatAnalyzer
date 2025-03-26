@@ -7,6 +7,15 @@ uploads/
 analysis_results/*.json
 *_THREADS.json
 *_CHAT.json
+chats/*.json
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
 
 # Sensitive data and API keys
 .env
@@ -34,3 +43,13 @@ coverage/
 # Logs
 logs/
 *.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+**/.DS_Store
