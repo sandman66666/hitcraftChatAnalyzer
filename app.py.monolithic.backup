@@ -1,0 +1,92 @@
+"""
+HitCraft Chat Analyzer - Legacy Flask Application
+
+This is the legacy version that acts as a thin wrapper around the modular components.
+For new development, please use app_modular.py directly.
+"""
+import os
+import flask
+from flask import Flask, render_template, session, jsonify, request, send_from_directory
+from flask_cors import CORS
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Import configuration and logging
+import config
+from logging_manager import add_log, get_logs, set_analysis_state
+
+# Create app
+app = Flask(__name__)
+
+# Setup CORS for the React frontend
+CORS(app, supports_credentials=True, resources={
+    r"/api/*": {"origins": ["http://localhost:3000", "http://127.0.0.1:3000"]}
+})
+
+# Configure app
+app.config.from_object(config)
+
+# Setup secret key for sessions
+app.secret_key = os.getenv('FLASK_SECRET_KEY', os.urandom(24))
+
+# Create necessary directories
+os.makedirs(config.TEMP_FOLDER, exist_ok=True)
+os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(config.RESULTS_FOLDER, exist_ok=True)
+os.makedirs(config.THREADS_FOLDER, exist_ok=True)
+
+# Import analysis state
+from routes.analysis_routes import analysis_state
+set_analysis_state(analysis_state)
+
+#------------------------------------------------------------------------------
+# Import all blueprint routes
+#------------------------------------------------------------------------------
+
+# Import all routes from blueprints
+from routes.index_routes import index_bp
+from routes.api_routes import api_bp
+from routes.upload_routes import upload_bp
+from routes.analysis_routes import analysis_bp
+
+# Register blueprints with the app
+app.register_blueprint(index_bp)
+app.register_blueprint(api_bp, url_prefix='/api')
+app.register_blueprint(upload_bp, url_prefix='/api')
+app.register_blueprint(analysis_bp, url_prefix='/api')
+
+#------------------------------------------------------------------------------
+# Legacy endpoints that didn't fit the /api prefix pattern
+#------------------------------------------------------------------------------
+
+@app.route('/get_threads')
+def get_threads():
+    """Legacy endpoint for thread listing"""
+    # This will use the implementation from api_routes.py but mount at a different URL
+    from routes.api_routes import get_thread_listing
+    return get_thread_listing()
+
+@app.route('/get_thread_content')
+def get_thread_content():
+    """Legacy endpoint for thread content"""
+    thread_id = request.args.get('thread_id')
+    if not thread_id:
+        return jsonify({'error': 'No thread ID provided'}), 400
+    
+    from routes.api_routes import get_thread_content 
+    return get_thread_content(thread_id)
+
+@app.route('/get_results/<filename>')
+def get_results(filename):
+    """Legacy endpoint for result files"""
+    return send_from_directory(config.RESULTS_FOLDER, filename)
+
+# Start the application
+if __name__ == '__main__':
+    import logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logging.info("Starting HitCraft Chat Analyzer server (Legacy Mode)")
+    add_log("Server starting...")
+    app.run(host="0.0.0.0", port=8095, debug=True)

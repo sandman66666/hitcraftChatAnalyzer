@@ -1,0 +1,73 @@
+.sidebar {
+  background-color: #2b3035;
+  color: #fff;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  width: 250px;
+  transition: all 0.3s;
+  box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+}
+
+.sidebar-header {
+  padding: 1.5rem 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.sidebar-header h3 {
+  margin-bottom: 0;
+  font-weight: 700;
+  color: #61dafb;
+}
+
+.brand-subtitle {
+  font-size: 0.85rem;
+  opacity: 0.7;
+  margin-top: 0.25rem;
+}
+
+.sidebar-menu {
+  flex-grow: 1;
+  padding-top: 1rem;
+}
+
+.sidebar-menu .nav-link {
+  color: rgba(255, 255, 255, 0.7);
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+  margin: 0.25rem 0.5rem;
+  display: flex;
+  align-items: center;
+  transition: all 0.2s ease;
+}
+
+.sidebar-menu .nav-link:hover:not(.disabled) {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.sidebar-menu .nav-link.active {
+  background-color: #61dafb;
+  color: #000;
+  font-weight: 500;
+}
+
+.sidebar-menu .nav-link.disabled {
+  color: rgba(255, 255, 255, 0.4);
+  cursor: not-allowed;
+}
+
+.sidebar-footer {
+  padding: 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 0.8rem;
+}
+
+.analysis-in-progress {
+  font-size: 0.8rem;
+  color: #ffc107;
+  font-style: italic;
+  margin-left: 4px;
+}

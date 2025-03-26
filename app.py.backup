@@ -1,0 +1,1549 @@
+import os
+import uuid
+import tempfile
+import time
+import sys
+import json
+import logging
+import threading
+import re
+from flask import Flask, request, render_template, jsonify, session, redirect, url_for, send_from_directory
+from flask_cors import CORS
+from werkzeug.utils import secure_filename
+
+import chat_processor
+import text_processor
+import claude_analyzer
+import datetime
+import hashlib
+import copy
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Global buffer for logging messages to display on the frontend
+log_buffer = []
+
+# Our application logger
+logger = logging.getLogger('hitcraft_analyzer')
+
+# Context manager to temporarily disable logging for imported functions
+class FunctionLoggingDisabled:
+    """Context manager to temporarily disable logging for imported functions"""
+    def __enter__(self):
+        # Save the current state
+        self.logger_level = logger.level
+        # Temporarily disable the logger
+        logger.setLevel(logging.CRITICAL)
+        return self
+        
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Restore the logger to its original state
+        logger.setLevel(self.logger_level)
+
+def add_log(message, level="info"):
+    """Add a log message to the buffer for frontend display"""
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    log_entry = {"timestamp": timestamp, "message": message, "level": level}
+    log_buffer.append(log_entry)
+    
+    # Also add to analysis state log entries for thread analysis progress
+    if analysis_state:
+        analysis_state['log_entries'].append(message)
+        # Keep only last 100 entries
+        if len(analysis_state['log_entries']) > 100:
+            analysis_state['log_entries'].pop(0)
+    
+    # Log to the standard logger (but don't call print to avoid recursion)
+    if level == "error":
+        logger.error(message)
+    elif level == "warning":
+        logger.warning(message)
+    else:
+        logger.info(message)
+    
+    # Keep only the last 1000 messages to prevent memory issues
+    if len(log_buffer) > 1000:
+        log_buffer.pop(0)
+
+# Initialize Flask app
+app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'dev_key_for_testing')
+# Configure CORS to support credentialed requests
+CORS(app, 
+     resources={r"/*": {"origins": ["http://localhost:3000", "http://127.0.0.1:3000"], 
+                        "supports_credentials": True,
+                        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+                        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"]}})
+app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['TEMP_FOLDER'] = 'temp_chunks'
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max upload
+app.config['ALLOWED_EXTENSIONS'] = {'txt', 'rtf', 'json'}  # Added JSON to allowed extensions
+app.config['MAX_CHUNKS'] = int(os.environ.get('MAX_CHUNKS', 1))  # Default to analyzing just 1 chunk for testing
+app.config['RESULTS_FOLDER'] = 'analysis_results'
+
+# Create necessary directories if they don't exist
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+os.makedirs(app.config['TEMP_FOLDER'], exist_ok=True)
+os.makedirs(app.config['RESULTS_FOLDER'], exist_ok=True)
+os.makedirs('organized_threads', exist_ok=True)  # Directory for organized thread files
+
+def allowed_file(filename):
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
+
+# Track analysis state
+analysis_state = {
+    'is_analyzing': False,
+    'current_thread': 0,
+    'total_threads': 0,
+    'analyzed_threads': 0,
+    'session_id': None,
+    'filename': None,
+    'thread_results': [],
+    'combined_results': None,
+    'last_updated': None,
+    'log_entries': []  # Store log entries to send to the frontend
+}
+
+@app.route('/')
+def index():
+    # Clear log buffer when starting a new session
+    global log_buffer
+    log_buffer = []
+    add_log("Starting new session")
+    
+    # Reset analysis state
+    analysis_state['is_analyzing'] = False
+    analysis_state['log_entries'] = []
+    
+    return render_template('index.html')
+
+@app.route('/api/claude-key')
+def get_claude_key():
+    """Return the Claude API key from the server's environment variables."""
+    api_key = os.environ.get('CLAUDE_API_KEY', '')
+    if not api_key:
+        return jsonify({'error': 'API key not configured on server'}), 500
+    return jsonify({'api_key': api_key})
+
+@app.route('/logs')
+def get_logs():
+    """Return the current logs to display in the UI"""
+    return jsonify(log_buffer)
+
+@app.route('/api/upload', methods=['POST'])
+def upload_file():
+    """Handle file upload and store the file"""
+    try:
+        # Check if file was included in the request
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file part in the request'}), 400
+        
+        file = request.files['file']
+        
+        # Check if a file was selected
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        # Create a new session ID
+        session_id = str(uuid.uuid4())
+        session['session_id'] = session_id
+        
+        # Create session directory
+        session_dir = os.path.join(app.config['TEMP_FOLDER'], session_id)
+        os.makedirs(session_dir, exist_ok=True)
+        
+        # Create threads directory within session
+        threads_dir = os.path.join(session_dir, 'threads')
+        os.makedirs(threads_dir, exist_ok=True)
+        
+        # Sanitize filename
+        safe_filename = secure_filename(file.filename)
+        session['filename'] = safe_filename
+        
+        # Save the file
+        filepath = os.path.join(session_dir, safe_filename)
+        file.save(filepath)
+        add_log(f"File saved to {filepath}")
+        
+        # Reset analysis state
+        analysis_state['session_id'] = session_id
+        analysis_state['filename'] = safe_filename
+        analysis_state['is_analyzing'] = False
+        analysis_state['current_thread'] = 0
+        analysis_state['total_threads'] = 0
+        analysis_state['analyzed_threads'] = 0
+        analysis_state['thread_results'] = []
+        analysis_state['combined_results'] = None
+        analysis_state['last_updated'] = datetime.datetime.now()
+        analysis_state['log_entries'] = []
+        
+        # Return success response without thread extraction
+        return jsonify({
+            'success': True,
+            'session_id': session_id,
+            'filename': safe_filename
+        })
+        
+    except Exception as e:
+        error_message = str(e)
+        add_log(f"Error uploading file: {error_message}", "error")
+        # Import traceback only when needed to avoid circular imports
+        import traceback
+        add_log(traceback.format_exc(), "error")
+        return jsonify({'error': error_message}), 500
+
+@app.route('/api/extract_threads', methods=['POST'])
+def extract_threads():
+    """Extract conversation threads from a chat file by grouping messages with the same threadId"""
+    try:
+        data = request.get_json() or {}
+        
+        # Get session information
+        session_id = session.get('session_id')
+        if not session_id:
+            session_id = data.get('session_id')
+            if session_id:
+                session['session_id'] = session_id
+        
+        filename = session.get('filename')
+        if not filename:
+            filename = data.get('filename')
+            if filename:
+                session['filename'] = filename
+        
+        if not session_id or not filename:
+            add_log("No session or filename found", "error")
+            return jsonify({'error': 'No uploaded file. Please upload a file first.'}), 400
+        
+        # Set up paths
+        session_dir = os.path.join(app.config['TEMP_FOLDER'], session_id)
+        filepath = os.path.join(session_dir, filename)
+        threads_dir = os.path.join(session_dir, 'threads')
+        
+        # Make sure the file exists
+        if not os.path.isfile(filepath):
+            add_log(f"File not found: {filepath}", "error")
+            return jsonify({'error': 'Uploaded file not found'}), 404
+        
+        # Extract threads from the file
+        result = extract_threads_from_chat_file(filepath, threads_dir)
+        
+        # Store thread count in session and update analysis state
+        analysis_state['total_threads'] = result['thread_count']
+        
+        # Return success with thread count
+        return jsonify({
+            'success': True,
+            'thread_count': result['thread_count'],
+            'thread_list_path': result['thread_list_path'],
+            'new_messages': result['new_messages']
+        })
+        
+    except Exception as e:
+        error_message = str(e)
+        add_log(f"Error extracting threads: {error_message}", "error")
+        import traceback
+        add_log(traceback.format_exc(), "error")
+        return jsonify({'error': error_message}), 500
+
+@app.route('/api/analyze_threads', methods=['POST'])
+def analyze_threads():
+    """Start analysis of a specific number of threads"""
+    try:
+        # Get request data
+        data = request.get_json() or {}
+        
+        # Get Claude API key
+        api_key = data.get('api_key')
+        if not api_key:
+            api_key = os.environ.get('CLAUDE_API_KEY')
+            add_log("Using server's Claude API key")
+        else:
+            add_log("API key provided: Yes")
+        
+        # Validate API key
+        if not api_key:
+            add_log("No Claude API key provided", "error")
+            return jsonify({'error': 'Claude API key is required'}), 400
+        
+        # Get the number of threads to analyze
+        thread_count = data.get('thread_count')
+        try:
+            thread_count = int(thread_count) if thread_count else None
+        except ValueError:
+            add_log(f"Invalid thread_count value, analyzing all threads", "warning")
+            thread_count = None
+        
+        # Get session information - checking both request data and session
+        session_id = data.get('session_id')
+        if not session_id:
+            session_id = session.get('session_id')
+            
+        filename = session.get('filename')
+        
+        if not session_id or not filename:
+            add_log("No session or filename found", "error")
+            return jsonify({'error': 'No uploaded file to analyze. Please upload a file first.'}), 400
+        
+        # Make sure we're not already analyzing
+        if analysis_state['is_analyzing']:
+            add_log("Analysis already in progress", "warning")
+            return jsonify({
+                'success': True,
+                'message': 'Analysis already in progress',
+                'current_thread': analysis_state['current_thread'],
+                'total_threads': analysis_state['total_threads']
+            })
+        
+        # Set up paths
+        session_dir = os.path.join(app.config['TEMP_FOLDER'], session_id)
+        threads_dir = os.path.join(session_dir, 'threads')
+        
+        # Ensure the results directory exists for persistence
+        results_dir = os.path.join(session_dir, 'results')
+        os.makedirs(results_dir, exist_ok=True)
+        
+        # Get available thread files
+        thread_files = []
+        if os.path.exists(threads_dir):
+            thread_files = sorted([f for f in os.listdir(threads_dir) if f.endswith('.txt')])
+        
+        if not thread_files:
+            add_log("No threads found for analysis", "error")
+            return jsonify({'error': 'No threads found for analysis'}), 400
+        
+        # Limit number of threads if specified
+        if thread_count and thread_count > 0:
+            thread_files = thread_files[:thread_count]
+            add_log(f"User requested to analyze {thread_count} threads", "info")
+        else:
+            add_log(f"Analyzing all {len(thread_files)} threads", "info")
+        
+        # Clear previous log entries
+        analysis_state['log_entries'] = []
+        
+        # Update analysis state
+        analysis_state['is_analyzing'] = True
+        analysis_state['session_id'] = session_id
+        analysis_state['filename'] = filename
+        analysis_state['total_threads'] = len(thread_files)
+        analysis_state['current_thread'] = 0
+        analysis_state['analyzed_threads'] = 0
+        analysis_state['thread_results'] = []
+        analysis_state['combined_results'] = None
+        analysis_state['last_updated'] = datetime.datetime.now()
+        
+        # Start thread analysis in a background thread
+        threading.Thread(target=analyze_threads_in_background, 
+                        args=(api_key, session_id, filename, threads_dir, thread_files)).start()
+        
+        # Return immediate success response
+        return jsonify({
+            'success': True,
+            'message': 'Analysis started',
+            'total_threads': len(thread_files)
+        })
+        
+    except Exception as e:
+        error_message = str(e)
+        add_log(f"Error starting analysis: {error_message}", "error")
+        analysis_state['is_analyzing'] = False
+        import traceback
+        add_log(traceback.format_exc(), "error")
+        return jsonify({'error': f'Analysis failed to start: {error_message}'}), 500
+
+@app.route('/api/thread_count', methods=['GET'])
+def thread_count():
+    """Return the current count of threads available and previously analyzed"""
+    try:
+        # Get session information
+        session_id = request.args.get('session_id')
+        if not session_id:
+            session_id = session.get('session_id')
+            
+        if not session_id:
+            return jsonify({'count': 0, 'previously_analyzed': 0})
+        
+        # Set up paths
+        session_dir = os.path.join(app.config['TEMP_FOLDER'], session_id)
+        threads_dir = os.path.join(session_dir, 'threads')
+        results_dir = os.path.join(session_dir, 'results')
+        
+        # Check if the threads directory exists
+        if not os.path.isdir(threads_dir):
+            return jsonify({'count': 0, 'previously_analyzed': 0})
+        
+        # Count thread files
+        thread_files = [f for f in os.listdir(threads_dir) if f.endswith('.txt')]
+        thread_count = len(thread_files)
+        
+        # Count previously analyzed threads
+        previously_analyzed = 0
+        if os.path.isdir(results_dir):
+            # Check if we have a combined results file which indicates analysis has been done
+            combined_results_path = os.path.join(results_dir, 'combined_results.json')
+            if os.path.isfile(combined_results_path):
+                try:
+                    with open(combined_results_path, 'r') as f:
+                        combined_results = json.load(f)
+                    # If we have thread_results in the combined results, count those
+                    previously_analyzed = len(combined_results.get('thread_results', []))
+                except Exception as e:
+                    add_log(f"Error reading combined results: {str(e)}", "error")
+        
+        return jsonify({
+            'count': thread_count,
+            'previously_analyzed': previously_analyzed
+        })
+        
+    except Exception as e:
+        error_message = str(e)
+        add_log(f"Error getting thread count: {error_message}", "error")
+        return jsonify({'error': error_message}), 500
+
+@app.route('/api/check_progress', methods=['GET'])
+def check_progress():
+    """Return the current progress of thread analysis (renamed from analysis_progress)"""
+    try:
+        # Set status based on analysis state
+        status = 'in_progress'
+        if not analysis_state['is_analyzing']:
+            if analysis_state['analyzed_threads'] > 0:
+                status = 'complete'
+            else:
+                status = 'not_started'
+        
+        # Get the log entries since the last request
+        log_entries = analysis_state['log_entries'].copy()
+        
+        # Clear the log entries for the next request
+        analysis_state['log_entries'] = []
+        
+        # Return current progress
+        return jsonify({
+            'success': True,
+            'status': status,
+            'threads_analyzed': analysis_state['analyzed_threads'],
+            'threads_total': analysis_state['total_threads'],
+            'current_thread': analysis_state['current_thread'],
+            'progress_percent': 0 if analysis_state['total_threads'] == 0 else 
+                               int((analysis_state['analyzed_threads'] / analysis_state['total_threads']) * 100),
+            'last_updated': analysis_state['last_updated'].isoformat() if analysis_state['last_updated'] else None,
+            'log_entries': log_entries
+        })
+        
+    except Exception as e:
+        error_message = str(e)
+        add_log(f"Error getting analysis progress: {error_message}", "error")
+        import traceback
+        add_log(traceback.format_exc(), "error")
+        return jsonify({'error': error_message}), 500
+
+@app.route('/api/cancel_analysis', methods=['POST'])
+def cancel_analysis():
+    """Cancel the current thread analysis"""
+    try:
+        # Get request data
+        data = request.get_json() or {}
+        
+        # Get the filename from request or session
+        filename = data.get('filename') or session.get('filename')
+        
+        if not filename:
+            return jsonify({'error': 'No active analysis session'}), 404
+        
+        # Check if analysis is actually running
+        if not analysis_state['is_analyzing']:
+            return jsonify({'success': True, 'message': 'No analysis in progress'})
+        
+        # Mark analysis as cancelled
+        analysis_state['is_analyzing'] = False
+        add_log("Analysis cancelled by user", "warning")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Analysis cancelled',
+            'threads_analyzed': analysis_state['analyzed_threads'],
+            'threads_total': analysis_state['total_threads']
+        })
+        
+    except Exception as e:
+        error_message = str(e)
+        add_log(f"Error cancelling analysis: {error_message}", "error")
+        import traceback
+        add_log(traceback.format_exc(), "error")
+        return jsonify({'error': error_message}), 500
+
+@app.route('/api/dashboard_data', methods=['GET'])
+def dashboard_data():
+    """Return the analysis results for dashboard view with supporting evidence"""
+    try:
+        # Get session information
+        session_id = session.get('session_id')
+        filename = session.get('filename')
+        
+        # Get time filter params if provided
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        
+        # Log filtering request
+        if start_date or end_date:
+            add_log(f"Time filtering requested: start={start_date}, end={end_date}")
+        
+        if not session_id or not filename:
+            return jsonify({'error': 'No active session or filename'}), 404
+        
+        # Set up paths
+        session_dir = os.path.join(app.config['TEMP_FOLDER'], session_id)
+        results_dir = os.path.join(session_dir, 'results')
+        
+        # Get results - prioritize in-memory results first
+        combined_results = None
+        
+        # Check if we have results in memory from current session
+        if analysis_state['combined_results'] is not None:
+            add_log("Using in-memory analysis results for dashboard")
+            combined_results = analysis_state['combined_results']
+        else:
+            # Otherwise look for saved results
+            combined_results_path = os.path.join(results_dir, 'combined_results.json')
+            if os.path.isfile(combined_results_path):
+                try:
+                    with open(combined_results_path, 'r') as f:
+                        combined_results = json.load(f)
+                    add_log(f"Loaded saved analysis results for dashboard")
+                except Exception as e:
+                    add_log(f"Error reading combined results: {str(e)}", "error")
+            
+            # If still no results, check in the global results folder
+            if not combined_results:
+                results_folder = app.config['RESULTS_FOLDER']
+                result_files = [f for f in os.listdir(results_folder) if f.startswith(f"analysis_{filename}_")]
+                
+                if result_files:
+                    # Get the most recent result file
+                    result_files.sort(reverse=True)
+                    latest_result = os.path.join(results_folder, result_files[0])
+                    
+                    with open(latest_result, 'r', encoding='utf-8') as f:
+                        combined_results = json.load(f)
+                    
+                    add_log(f"Loaded analysis results from file: {latest_result}")
+                    
+                    # Also save a copy to the session results directory for future use
+                    os.makedirs(results_dir, exist_ok=True)
+                    with open(combined_results_path, 'w', encoding='utf-8') as f:
+                        json.dump(combined_results, f, indent=2)
+        
+        if not combined_results:
+            return jsonify({'error': 'No analysis results found'}), 404
+            
+        # Apply time filtering if specified
+        if start_date or end_date:
+            # Filter thread results by date if time filters are provided
+            filtered_results = filter_results_by_time(combined_results, start_date, end_date)
+            add_log(f"Filtered results to {len(filtered_results.get('thread_results', []))} threads")
+            return jsonify(filtered_results)
+        
+        # Return full results if no filtering
+        return jsonify(combined_results)
+    
+    except Exception as e:
+        error_message = str(e)
+        add_log(f"Error getting dashboard data: {error_message}", "error")
+        import traceback
+        add_log(traceback.format_exc(), "error")
+        return jsonify({'error': error_message}), 500
+
+@app.route('/get_threads')
+def list_threads():
+    """Return the list of threads available for browsing"""
+    # Get session_id from query parameter for React frontend compatibility
+    session_id = request.args.get('session_id')
+    
+    # If session_id is provided, look for threads in that session's directory
+    if session_id:
+        session_dir = os.path.join('temp_chunks', session_id)
+        thread_list_path = os.path.join(session_dir, 'thread_list.json')
+        
+        if os.path.exists(thread_list_path):
+            with open(thread_list_path, 'r', encoding='utf-8') as f:
+                thread_list = json.load(f)
+                
+            # Return paginated results
+            page = request.args.get('page', 1, type=int)
+            per_page = request.args.get('per_page', 10, type=int)
+            
+            total = len(thread_list)
+            
+            start_idx = (page - 1) * per_page
+            end_idx = min(start_idx + per_page, total)
+            
+            current_page_threads = thread_list[start_idx:end_idx]
+            
+            return jsonify({
+                'threads': current_page_threads,
+                'total': total,
+                'page': page,
+                'per_page': per_page,
+                'total_pages': (total + per_page - 1) // per_page
+            })
+    
+    # Fall back to session-based approach for backward compatibility
+    if 'thread_list_path' not in session or not session.get('has_threads', False):
+        return jsonify({'error': 'No threads available. Please upload a JSON chat file first.'}), 404
+    
+    # Load thread list from file
+    thread_list_path = session['thread_list_path']
+    with open(thread_list_path, 'r', encoding='utf-8') as f:
+        thread_list = json.load(f)
+    
+    # Return paginated results
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 10, type=int)
+    
+    total = len(thread_list)
+    
+    start_idx = (page - 1) * per_page
+    end_idx = min(start_idx + per_page, total)
+    
+    current_page_threads = thread_list[start_idx:end_idx]
+    
+    return jsonify({
+        'threads': current_page_threads,
+        'total': total,
+        'page': page,
+        'per_page': per_page,
+        'total_pages': (total + per_page - 1) // per_page
+    })
+
+@app.route('/get_thread_content')
+def get_thread():
+    """Return the content of a specific thread"""
+    # Get session_id from query parameter for React frontend compatibility
+    session_id = request.args.get('session_id')
+    thread_id = request.args.get('thread_id')
+    
+    if not thread_id:
+        return jsonify({'error': 'No thread ID provided'}), 400
+    
+    # If session_id is provided, look for thread in that session's directory
+    if session_id:
+        session_dir = os.path.join('temp_chunks', session_id)
+        threads_dir = os.path.join(session_dir, 'threads')
+        
+        if os.path.exists(threads_dir):
+            # Try without adding 'thread_' prefix since the ID might already have it
+            thread_path = os.path.join(threads_dir, f"{thread_id}.txt")
+            
+            if not os.path.exists(thread_path):
+                # Try with legacy path format as fallback
+                thread_path = os.path.join(threads_dir, f"thread_{thread_id}.txt")
+            
+            if os.path.exists(thread_path):
+                try:
+                    with open(thread_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        
+                    # Parse content into messages array for better UI display
+                    messages = content.split('\n\n')
+                    # Filter out empty messages
+                    messages = [msg for msg in messages if msg.strip()]
+                    
+                    # Format messages for React frontend
+                    formatted_messages = []
+                    for msg in messages:
+                        if msg.startswith('user:'):
+                            role = 'user'
+                            content = msg[5:].strip()
+                        elif msg.startswith('assistant:'):
+                            role = 'assistant'
+                            content = msg[10:].strip()
+                        else:
+                            role = 'system'
+                            content = msg.strip()
+                            
+                        formatted_messages.append({
+                            'role': role,
+                            'content': content
+                        })
+                    
+                    return jsonify({
+                        'thread': {
+                            'id': thread_id, 
+                            'messages': formatted_messages,
+                            'message_count': len(formatted_messages)
+                        }
+                    })
+                except Exception as e:
+                    add_log(f"Error retrieving thread content: {str(e)}", "error")
+                    return jsonify({'error': f'Error retrieving thread content: {str(e)}'}), 500
+    
+    # Fall back to session-based approach for backward compatibility
+    if 'threads_dir' not in session or not session.get('has_threads', False):
+        return jsonify({'error': 'No threads available. Please upload a JSON chat file first.'}), 404
+    
+    threads_dir = session['threads_dir']
+    thread_path = os.path.join(threads_dir, f"thread_{thread_id}.txt")
+    
+    if not os.path.exists(thread_path):
+        return jsonify({'error': f'Thread {thread_id} not found'}), 404
+    
+    try:
+        with open(thread_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            
+        # Parse content into messages array for better UI display
+        messages = content.split('\n\n')
+        # Filter out empty messages
+        messages = [msg for msg in messages if msg.strip()]
+        
+        return jsonify({
+            'id': thread_id, 
+            'content': messages,
+            'message_count': len(messages)
+        })
+    except Exception as e:
+        add_log(f"Error retrieving thread content: {str(e)}", "error")
+        return jsonify({'error': f'Error retrieving thread content: {str(e)}'}), 500
+
+@app.route('/api/list_threads', methods=['GET'])
+def get_thread_listing():
+    """Return the list of threads available for browsing"""
+    try:
+        # Get session information
+        session_id = session.get('session_id')
+        
+        if not session_id:
+            return jsonify({'error': 'No active session'}), 404
+            
+        # Set up path to thread list file
+        session_dir = os.path.join(app.config['TEMP_FOLDER'], session_id)
+        thread_list_path = os.path.join(session_dir, 'thread_list.json')
+        
+        # Check if thread list exists
+        if not os.path.isfile(thread_list_path):
+            return jsonify({'threads': []})
+            
+        # Load thread list
+        with open(thread_list_path, 'r') as f:
+            thread_list = json.load(f)
+            
+        # Sort threads by last_message_time if available, otherwise by id
+        try:
+            thread_list.sort(key=lambda x: x.get('last_message_time', ''), reverse=True)
+        except:
+            thread_list.sort(key=lambda x: x.get('id', ''))
+            
+        # Apply pagination if requested
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 50, type=int)
+        
+        # Apply time filter if specified
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        
+        if start_date or end_date:
+            # Convert date strings to datetime objects
+            start_datetime = None
+            end_datetime = None
+            
+            if start_date:
+                try:
+                    start_datetime = parse_datetime(start_date)
+                except:
+                    pass
+                    
+            if end_date:
+                try:
+                    end_datetime = parse_datetime(end_date)
+                except:
+                    pass
+                    
+            # Filter threads by time
+            filtered_threads = []
+            for thread in thread_list:
+                thread_time = parse_datetime(thread.get('last_message_time'))
+                if not thread_time:
+                    thread_time = parse_datetime(thread.get('first_message_time'))
+                    
+                if thread_time and is_within_timeframe(thread_time, start_datetime, end_datetime):
+                    filtered_threads.append(thread)
+                    
+            thread_list = filtered_threads
+            
+        # Calculate pagination
+        total_threads = len(thread_list)
+        total_pages = (total_threads + per_page - 1) // per_page
+        
+        start_idx = (page - 1) * per_page
+        end_idx = min(start_idx + per_page, total_threads)
+        
+        paginated_threads = thread_list[start_idx:end_idx]
+        
+        return jsonify({
+            'threads': paginated_threads,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total_threads': total_threads,
+                'total_pages': total_pages
+            }
+        })
+        
+    except Exception as e:
+        error_message = str(e)
+        add_log(f"Error listing threads: {error_message}", "error")
+        import traceback
+        add_log(traceback.format_exc(), "error")
+        return jsonify({'error': error_message}), 500
+
+@app.route('/api/thread/<thread_id>', methods=['GET'])
+def get_thread_content(thread_id):
+    """Return the content of a specific thread"""
+    try:
+        # Get session information
+        session_id = session.get('session_id')
+        
+        if not session_id:
+            return jsonify({'error': 'No active session'}), 404
+            
+        # Set up path to thread file
+        session_dir = os.path.join(app.config['TEMP_FOLDER'], session_id)
+        threads_dir = os.path.join(session_dir, 'threads')
+        
+        # Try to load from JSON file first (which has the structured data)
+        thread_json_path = os.path.join(threads_dir, f"{thread_id}.json")
+        if os.path.isfile(thread_json_path):
+            try:
+                with open(thread_json_path, 'r', encoding='utf-8') as f:
+                    thread_data = json.load(f)
+                
+                # Get the thread analysis if available
+                thread_analysis = None
+                
+                # If not in memory, try to load from file
+                results_dir = os.path.join(session_dir, 'results')
+                combined_results_path = os.path.join(results_dir, 'combined_results.json')
+                if os.path.isfile(combined_results_path):
+                    try:
+                        with open(combined_results_path, 'r') as f:
+                            combined_results = json.load(f)
+                        for result in combined_results.get('thread_results', []):
+                            if result.get('thread_id') == thread_id:
+                                thread_analysis = result
+                                break
+                    except:
+                        pass
+                
+                return jsonify({
+                    'thread_id': thread_id,
+                    'messages': thread_data.get('messages', []),
+                    'first_message_time': thread_data.get('first_message_time'),
+                    'last_message_time': thread_data.get('last_message_time'),
+                    'analysis': thread_analysis
+                })
+            except Exception as e:
+                add_log(f"Error loading thread JSON data: {str(e)}", "warning")
+        
+        # Fall back to text file if JSON not available
+        thread_text_path = os.path.join(threads_dir, f"{thread_id}.txt")
+        if os.path.isfile(thread_text_path):
+            with open(thread_text_path, 'r', encoding='utf-8') as f:
+                thread_text = f.read()
+                
+            # Parse the text into messages (basic parsing)
+            messages = []
+            current_role = None
+            current_content = []
+            
+            for line in thread_text.split('\n'):
+                line = line.strip()
+                if not line:
+                    continue
+                    
+                if line.startswith('USER:'):
+                    # Save previous message if exists
+                    if current_role and current_content:
+                        messages.append({
+                            'role': current_role,
+                            'content': '\n'.join(current_content)
+                        })
+                    # Start new user message
+                    current_role = 'user'
+                    current_content = [line[5:].strip()]
+                elif line.startswith('ASSISTANT:'):
+                    # Save previous message if exists
+                    if current_role and current_content:
+                        messages.append({
+                            'role': current_role,
+                            'content': '\n'.join(current_content)
+                        })
+                    # Start new assistant message
+                    current_role = 'assistant'
+                    current_content = [line[10:].strip()]
+                else:
+                    # Continue current message
+                    if current_content:
+                        current_content.append(line)
+            
+            # Add the last message
+            if current_role and current_content:
+                messages.append({
+                    'role': current_role,
+                    'content': '\n'.join(current_content)
+                })
+                
+            return jsonify({
+                'thread_id': thread_id,
+                'messages': messages,
+                'text_format': True
+            })
+            
+        return jsonify({'error': 'Thread not found'}), 404
+        
+    except Exception as e:
+        error_message = str(e)
+        add_log(f"Error getting thread: {error_message}", "error")
+        import traceback
+        add_log(traceback.format_exc(), "error")
+        return jsonify({'error': error_message}), 500
+
+def extract_threads_from_chat_file(filepath, threads_dir):
+    """Extract conversation threads from a chat file by grouping messages with the same threadId"""
+    try:
+        # Load the JSON file
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # Check if data is already a list of messages or has a 'messages' key
+        if isinstance(data, list):
+            messages = data
+        else:
+            messages = data.get('messages', [])
+        
+        # Create a dictionary to track which files have been processed
+        processed_file_path = os.path.join(os.path.dirname(threads_dir), 'processed_files.json')
+        processed_files = {}
+        if os.path.exists(processed_file_path):
+            try:
+                with open(processed_file_path, 'r') as f:
+                    processed_files = json.load(f)
+            except:
+                add_log("Error reading processed files tracking, starting fresh", "warning")
+        
+        # Check if this file has been processed before
+        file_hash = hashlib.md5(open(filepath, 'rb').read()).hexdigest()
+        file_info = processed_files.get(file_hash, {})
+        
+        # Get previously processed message IDs to avoid duplicates
+        processed_msgs = file_info.get('processed_msg_ids', set())
+        if isinstance(processed_msgs, list):
+            processed_msgs = set(processed_msgs)
+        
+        add_log(f"Found {len(messages)} messages in chat file")
+        
+        # Group messages by threadId
+        threads = {}
+        new_msg_count = 0
+        
+        for message in messages:
+            # Skip if this message was already processed
+            msg_id = message.get('id')
+            if msg_id and msg_id in processed_msgs:
+                continue
+                
+            thread_id = message.get('threadId')
+            if not thread_id:
+                continue  # Skip messages without threadId
+            
+            # Ensure thread_id is hashable (convert dict to string if needed)
+            if isinstance(thread_id, dict):
+                thread_id = json.dumps(thread_id, sort_keys=True)
+            elif not isinstance(thread_id, (str, int)):
+                thread_id = str(thread_id)
+            
+            # Add timestamp metadata to the message if not present
+            if 'createdAt' not in message and 'timestamp' not in message:
+                # Try to extract timestamp from content if in standard format
+                content = message.get('content', '')
+                timestamp_match = re.search(r'\[([\d\-: ]+)\]', content)
+                if timestamp_match:
+                    message['timestamp'] = timestamp_match.group(1)
+                else:
+                    # Use current time if no timestamp found
+                    message['timestamp'] = datetime.datetime.now().isoformat()
+            
+            # Initialize thread if it doesn't exist
+            if thread_id not in threads:
+                threads[thread_id] = []
+            
+            # Add message to thread
+            threads[thread_id].append(message)
+            
+            # Track that we've processed this message
+            if msg_id:
+                processed_msgs.add(msg_id)
+                new_msg_count += 1
+        
+        add_log(f"Extracted {len(threads)} threads with {new_msg_count} new messages")
+        
+        # Sort messages in each thread by timestamp
+        for thread_id, messages in threads.items():
+            # Sort by timestamp if available
+            try:
+                def get_sortable_timestamp(x):
+                    # Try to get createdAt first
+                    timestamp = x.get('createdAt')
+                    if timestamp is None:
+                        timestamp = x.get('timestamp', '')
+                    
+                    # If timestamp is a dict or non-comparable type, convert to string
+                    if not isinstance(timestamp, (str, int, float)) or isinstance(timestamp, dict):
+                        timestamp = str(timestamp)
+                        
+                    return timestamp
+                    
+                messages.sort(key=get_sortable_timestamp)
+            except Exception as e:
+                add_log(f"Error sorting messages for thread {thread_id}: {str(e)}", "warning")
+                # Continue without sorting if there's an error
+        
+        # Prepare thread list for UI
+        thread_list = []
+        
+        # Save each thread to a file
+        os.makedirs(threads_dir, exist_ok=True)
+        
+        for thread_id, messages in threads.items():
+            if not messages:  # Skip empty threads
+                continue
+                
+            # Format thread messages for analysis
+            formatted_thread = format_thread_messages_for_analysis(messages)
+            
+            # Add time metadata
+            first_msg_time = messages[0].get('createdAt') or messages[0].get('timestamp')
+            last_msg_time = messages[-1].get('createdAt') or messages[-1].get('timestamp')
+            
+            # Create thread metadata
+            thread_metadata = {
+                'id': thread_id,
+                'message_count': len(messages),
+                'first_message_time': first_msg_time,
+                'last_message_time': last_msg_time,
+                'title': f"Thread {thread_id}"
+            }
+            
+            # Handle content that could be a list for the preview
+            content = messages[0].get('content', '')
+            if isinstance(content, list):
+                content = ' '.join([str(item) for item in content])
+            thread_metadata['preview'] = content[:100] + '...' if content else 'No content'
+            
+            thread_list.append(thread_metadata)
+            
+            # Save thread to file - keep the .txt format for compatibility
+            thread_path = os.path.join(threads_dir, f"{thread_id}.txt")
+            with open(thread_path, 'w', encoding='utf-8') as f:
+                f.write(formatted_thread)
+            
+            # Also save original messages in JSON format for better processing
+            thread_json_path = os.path.join(threads_dir, f"{thread_id}.json")
+            with open(thread_json_path, 'w', encoding='utf-8') as f:
+                json.dump(messages, f, indent=2)
+        
+        # Save the thread list for UI
+        thread_list_path = os.path.join(os.path.dirname(threads_dir), 'thread_list.json')
+        
+        # If thread list already exists, merge with it
+        existing_threads = []
+        if os.path.exists(thread_list_path):
+            try:
+                with open(thread_list_path, 'r', encoding='utf-8') as f:
+                    existing_threads = json.load(f)
+            except:
+                add_log("Error reading existing thread list", "warning")
+        
+        # Create a map of existing threads by ID
+        existing_thread_map = {t['id']: t for t in existing_threads}
+        
+        # Merge with new threads, preferring new data
+        for thread in thread_list:
+            existing_thread_map[thread['id']] = thread
+        
+        # Convert back to list and sort by last_message_time (newest first)
+        merged_thread_list = list(existing_thread_map.values())
+        merged_thread_list.sort(key=lambda x: x.get('last_message_time', ''), reverse=True)
+        
+        with open(thread_list_path, 'w', encoding='utf-8') as f:
+            json.dump(merged_thread_list, f, indent=2)
+        
+        # Update processed files tracking
+        file_info = {
+            'path': filepath,
+            'last_processed': datetime.datetime.now().isoformat(),
+            'processed_msg_ids': list(processed_msgs)  # Convert set to list for JSON
+        }
+        processed_files[file_hash] = file_info
+        
+        with open(processed_file_path, 'w') as f:
+            json.dump(processed_files, f, indent=2)
+        
+        add_log(f"Saved {len(merged_thread_list)} threads to {threads_dir}")
+        
+        return {
+            'success': True,
+            'thread_count': len(merged_thread_list),
+            'thread_list_path': thread_list_path,
+            'new_messages': new_msg_count
+        }
+        
+    except Exception as e:
+        error_message = str(e)
+        add_log(f"Error in extract_threads_from_chat_file: {error_message}", "error")
+        import traceback
+        add_log(traceback.format_exc(), "error")
+        raise
+
+def format_thread_messages_for_analysis(messages):
+    """Format a list of messages as a thread for Claude analysis"""
+    formatted = f"Thread with {len(messages)} messages:\n\n"
+    
+    for msg in messages:
+        # Add timestamp if available
+        if 'createdAt' in msg:
+            try:
+                if isinstance(msg['createdAt'], dict) and '$date' in msg['createdAt']:
+                    timestamp_str = msg['createdAt']['$date']
+                else:
+                    timestamp_str = msg['createdAt']
+                    
+                timestamp = datetime.datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                formatted += f"[{timestamp.strftime('%Y-%m-%d %H:%M:%S')}] "
+            except:
+                # If timestamp parsing fails, use raw value
+                if isinstance(msg['createdAt'], dict) and '$date' in msg['createdAt']:
+                    formatted += f"[{msg['createdAt']['$date']}] "
+                else:
+                    formatted += f"[{msg['createdAt']}] "
+        
+        # Add role/author
+        role = msg.get('role', 'unknown')
+        formatted += f"{role.upper()}: "
+        
+        # Format and add content
+        if 'content' in msg:
+            content = msg['content']
+            
+            # Handle content as list (Claude API format)
+            if isinstance(content, list):
+                content_text = ""
+                for item in content:
+                    if isinstance(item, dict):
+                        if item.get('type') == 'text':
+                            content_text += item.get('text', '') + "\n"
+                    elif isinstance(item, str):
+                        content_text += item + "\n"
+                formatted += content_text.strip()
+            # Handle content as string
+            elif isinstance(content, str):
+                formatted += content
+        
+        formatted += "\n\n"
+    
+    return formatted
+
+def analyze_threads_in_background(api_key, session_id, filename, threads_dir, thread_files):
+    """Analyze threads one by one in the background"""
+    try:
+        add_log(f"Starting background analysis of {len(thread_files)} threads")
+        
+        # Create session-specific results directory
+        session_dir = os.path.join(app.config['TEMP_FOLDER'], session_id)
+        results_dir = os.path.join(session_dir, 'results')
+        os.makedirs(results_dir, exist_ok=True)
+        
+        # Also create global results directory
+        os.makedirs(app.config['RESULTS_FOLDER'], exist_ok=True)
+        
+        # Timestamp for this analysis run
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Create results file paths - both in session folder and global folder
+        session_result_path = os.path.join(results_dir, 'combined_results.json')
+        global_result_path = os.path.join(app.config['RESULTS_FOLDER'], f"analysis_{filename}_{timestamp}.json")
+        
+        # Initialize combined results
+        combined_results = None
+        
+        # Check for existing results to accumulate analysis over time
+        if os.path.exists(session_result_path):
+            try:
+                with open(session_result_path, 'r') as f:
+                    combined_results = json.load(f)
+                add_log("Found existing analysis results, will accumulate new insights")
+                
+                # Check if we have thread results field
+                if 'thread_results' not in combined_results:
+                    combined_results['thread_results'] = []
+                    
+                # Check previously analyzed thread IDs
+                analyzed_thread_ids = [tr.get('thread_id') for tr in combined_results.get('thread_results', [])]
+                add_log(f"Found {len(analyzed_thread_ids)} previously analyzed threads")
+                
+            except Exception as e:
+                add_log(f"Error loading existing results, starting fresh: {str(e)}", "warning")
+                combined_results = None
+        
+        # Initialize new combined results if needed
+        if combined_results is None:
+            combined_results = {
+                'categories': [],
+                'top_discussions': [],
+                'response_quality': {
+                    'average_score': 0,
+                    'good_examples': [],
+                    'poor_examples': []
+                },
+                'improvement_areas': [],
+                'user_satisfaction': {
+                    'overall_assessment': '',
+                    'positive_indicators': [],
+                    'negative_indicators': []
+                },
+                'unmet_needs': [],
+                'product_effectiveness': {
+                    'assessment': '',
+                    'strengths': [],
+                    'weaknesses': []
+                },
+                'key_insights': [],
+                'thread_results': [],
+                'analysis_metadata': {
+                    'first_analyzed_at': timestamp,
+                    'last_analyzed_at': timestamp,
+                    'total_threads_analyzed': 0,
+                    'total_messages_analyzed': 0
+                }
+            }
+        else:
+            # Update the last analyzed timestamp
+            if 'analysis_metadata' not in combined_results:
+                combined_results['analysis_metadata'] = {}
+                
+            combined_results['analysis_metadata']['last_analyzed_at'] = timestamp
+        
+        # Load thread list to get metadata
+        thread_list_path = os.path.join(os.path.dirname(threads_dir), 'thread_list.json')
+        thread_metadata = {}
+        if os.path.exists(thread_list_path):
+            try:
+                with open(thread_list_path, 'r') as f:
+                    thread_list = json.load(f)
+                    # Create a map of thread ID to metadata
+                    thread_metadata = {t['id']: t for t in thread_list}
+            except Exception as e:
+                add_log(f"Error loading thread metadata: {str(e)}", "warning")
+        
+        # Process each thread
+        new_thread_results = []
+        skipped_threads = 0
+        
+        for i, thread_file in enumerate(thread_files):
+            # Update state
+            analysis_state['current_thread'] = i + 1
+            analysis_state['last_updated'] = datetime.datetime.now()
+            
+            # Extract thread ID from filename
+            thread_id = thread_file.replace('.txt', '')
+            thread_path = os.path.join(threads_dir, thread_file)
+            
+            add_log(f"Processing thread {i+1}/{len(thread_files)}: {thread_id}")
+            
+            # Check if we already have results for this thread
+            thread_exists = False
+            for result in combined_results.get('thread_results', []):
+                if result.get('thread_id') == thread_id:
+                    thread_exists = True
+                    add_log(f"Thread {thread_id} already analyzed, skipping")
+                    skipped_threads += 1
+                    break
+            
+            if thread_exists:
+                continue
+            
+            # Read thread content
+            with open(thread_path, 'r', encoding='utf-8') as f:
+                thread_content = f.read()
+            
+            # Analyze the thread with Claude
+            try:
+                thread_result = claude_analyzer.analyze_single_thread(thread_content, api_key)
+                
+                # Add thread ID and metadata to the result
+                thread_result['thread_id'] = thread_id
+                
+                # Add timestamp metadata if available
+                if thread_id in thread_metadata:
+                    meta = thread_metadata[thread_id]
+                    thread_result['first_message_time'] = meta.get('first_message_time')
+                    thread_result['last_message_time'] = meta.get('last_message_time')
+                    thread_result['message_count'] = meta.get('message_count')
+                
+                # Add to new thread results
+                new_thread_results.append(thread_result)
+                
+                # Update thread count
+                analysis_state['analyzed_threads'] += 1
+                
+                add_log(f"Thread {thread_id} analysis completed")
+                
+            except Exception as e:
+                add_log(f"Error analyzing thread {thread_id}: {str(e)}", "error")
+        
+        # Update combined results with the new thread results
+        combined_results['thread_results'].extend(new_thread_results)
+        
+        # Update metadata
+        combined_results['analysis_metadata']['total_threads_analyzed'] = len(combined_results['thread_results'])
+        
+        # Count total messages
+        message_count = sum(tr.get('message_count', 0) for tr in combined_results['thread_results'])
+        combined_results['analysis_metadata']['total_messages_analyzed'] = message_count
+        
+        # Only recombine results if we have new threads
+        if new_thread_results:
+            # Combine all thread results to generate overall insights
+            add_log(f"Generating combined insights from {len(combined_results['thread_results'])} threads")
+            updated_combined = claude_analyzer.combine_results(combined_results['thread_results'])
+            
+            # Update the combined results fields while preserving the thread_results
+            for key, value in updated_combined.items():
+                if key != 'thread_results' and key != 'analysis_metadata':
+                    combined_results[key] = value
+            
+            add_log("Combined insights updated with new thread data")
+        else:
+            add_log(f"No new threads analyzed, keeping existing insights ({skipped_threads} threads skipped)")
+        
+        # Save updated results to both session and global files
+        with open(session_result_path, 'w', encoding='utf-8') as f:
+            json.dump(combined_results, f, indent=2)
+        
+        with open(global_result_path, 'w', encoding='utf-8') as f:
+            json.dump(combined_results, f, indent=2)
+        
+        # Update analysis state with combined results
+        analysis_state['combined_results'] = combined_results
+        
+        # Final update after all threads are processed
+        add_log(f"Analysis completed: {analysis_state['analyzed_threads']} new threads analyzed")
+        add_log(f"Total threads in analysis: {len(combined_results['thread_results'])}")
+        add_log(f"Results saved to session folder and global results folder")
+        
+        # Mark analysis as complete
+        analysis_state['is_analyzing'] = False
+        
+    except Exception as e:
+        error_message = str(e)
+        add_log(f"Error in background thread analysis: {error_message}", "error")
+        import traceback
+        add_log(traceback.format_exc(), "error")
+        analysis_state['is_analyzing'] = False
+
+@app.route('/get_results/<filename>')
+def get_results(filename):
+    """Return the analysis results"""
+    try:
+        # Check if we have results in memory
+        if (analysis_state['filename'] == filename and 
+            analysis_state['combined_results'] is not None):
+            add_log("Returning in-memory analysis results")
+            return jsonify(analysis_state['combined_results'])
+        
+        # Otherwise look for the latest results file
+        results_dir = app.config['RESULTS_FOLDER']
+        result_files = [f for f in os.listdir(results_dir) if f.startswith(f"analysis_{filename}_")]
+        
+        if not result_files:
+            return jsonify({'error': 'No analysis results found for this file'}), 404
+        
+        # Get the most recent result file
+        result_files.sort(reverse=True)
+        latest_result = os.path.join(results_dir, result_files[0])
+        
+        with open(latest_result, 'r', encoding='utf-8') as f:
+            results = json.load(f)
+        
+        add_log(f"Loaded analysis results: {latest_result}")
+        return jsonify(results)
+    
+    except Exception as e:
+        add_log(f"Error loading analysis results: {str(e)}", "error")
+        return jsonify({'error': f'Failed to load results: {str(e)}'}), 500
+
+def filter_results_by_time(results, start_date=None, end_date=None):
+    """Filter analysis results by time period"""
+    try:
+        # If no filtering needed, return original results
+        if not start_date and not end_date:
+            return results
+            
+        # Create a copy of results to modify
+        filtered = copy.deepcopy(results)
+        
+        # Convert date strings to datetime objects
+        start_datetime = None
+        end_datetime = None
+        
+        if start_date:
+            try:
+                start_datetime = datetime.datetime.fromisoformat(start_date)
+            except ValueError:
+                # Try different format if ISO format fails
+                start_datetime = datetime.datetime.strptime(start_date, "%Y-%m-%d")
+        
+        if end_date:
+            try:
+                end_datetime = datetime.datetime.fromisoformat(end_date)
+            except ValueError:
+                # Try different format if ISO format fails
+                end_datetime = datetime.datetime.strptime(end_date, "%Y-%m-%d")
+                # Set to end of day
+                end_datetime = end_datetime.replace(hour=23, minute=59, second=59)
+        
+        # Filter thread results
+        original_threads = results.get('thread_results', [])
+        filtered_threads = []
+        
+        for thread in original_threads:
+            # Check thread timestamps
+            thread_time = None
+            
+            # First try last_message_time as the thread time
+            if 'last_message_time' in thread:
+                try:
+                    thread_time = parse_datetime(thread['last_message_time'])
+                except:
+                    pass
+            
+            # If that fails, try first_message_time
+            if not thread_time and 'first_message_time' in thread:
+                try:
+                    thread_time = parse_datetime(thread['first_message_time'])
+                except:
+                    pass
+            
+            # Skip this thread if we can't determine its time
+            if not thread_time:
+                continue
+                
+            # Apply time filters
+            if start_datetime and thread_time < start_datetime:
+                continue
+            if end_datetime and thread_time > end_datetime:
+                continue
+                
+            # Thread passed time filters
+            filtered_threads.append(thread)
+        
+        # Update filtered results with filtered threads
+        filtered['thread_results'] = filtered_threads
+        filtered['thread_count'] = len(filtered_threads)
+        
+        # If there are no threads in the filtered results, return empty categories
+        if not filtered_threads:
+            add_log("No threads in specified time period")
+            # Return empty structure with metadata
+            filtered = {
+                'categories': [],
+                'top_discussions': [],
+                'response_quality': {
+                    'average_score': 0,
+                    'good_examples': [],
+                    'poor_examples': []
+                },
+                'improvement_areas': [],
+                'user_satisfaction': {
+                    'overall_assessment': 'No data for selected time period',
+                    'positive_indicators': [],
+                    'negative_indicators': []
+                },
+                'unmet_needs': [],
+                'key_insights': [],
+                'thread_results': [],
+                'analysis_metadata': {
+                    'filtered': True,
+                    'original_thread_count': len(original_threads),
+                    'filtered_thread_count': 0,
+                    'start_date': start_date,
+                    'end_date': end_date
+                }
+            }
+            return filtered
+            
+        # Recombine results with only the filtered threads to generate time-specific insights
+        add_log(f"Regenerating insights for {len(filtered_threads)} threads in time period")
+        
+        # Generate combined insights based on filtered threads
+        updated_insights = claude_analyzer.combine_results(filtered_threads)
+        
+        # Update insight fields while keeping thread_results and metadata
+        for key, value in updated_insights.items():
+            if key != 'thread_results' and key != 'analysis_metadata':
+                filtered[key] = value
+        
+        # Update metadata to indicate filtering
+        if 'analysis_metadata' not in filtered:
+            filtered['analysis_metadata'] = {}
+            
+        filtered['analysis_metadata']['filtered'] = True
+        filtered['analysis_metadata']['original_thread_count'] = len(original_threads)
+        filtered['analysis_metadata']['filtered_thread_count'] = len(filtered_threads)
+        filtered['analysis_metadata']['start_date'] = start_date
+        filtered['analysis_metadata']['end_date'] = end_date
+        
+        return filtered
+        
+    except Exception as e:
+        add_log(f"Error filtering results by time: {str(e)}", "error")
+        # Return original results if filtering fails
+        return results
+
+def parse_datetime(dt_str):
+    """Parse various datetime formats into a datetime object"""
+    if not dt_str:
+        return None
+        
+    # Try different formats
+    formats = [
+        "%Y-%m-%dT%H:%M:%S.%fZ",  # ISO format with milliseconds
+        "%Y-%m-%dT%H:%M:%SZ",     # ISO format without milliseconds
+        "%Y-%m-%dT%H:%M:%S",      # ISO format without Z
+        "%Y-%m-%d %H:%M:%S",      # Simple format
+        "%Y-%m-%d"                # Date only
+    ]
+    
+    # Also try parsing with datetime.fromisoformat
+    try:
+        return datetime.datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+    except:
+        pass
+    
+    # Try each format
+    for fmt in formats:
+        try:
+            return datetime.datetime.strptime(dt_str, fmt)
+        except:
+            continue
+    
+    # If all fail, raise exception
+    raise ValueError(f"Could not parse datetime: {dt_str}")
+
+if __name__ == '__main__':
+    logging.info("Starting HitCraft Chat Analyzer server")
+    add_log("Server starting...")
+    app.run(host="0.0.0.0", port=8097, debug=True)

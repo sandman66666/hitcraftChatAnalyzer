@@ -34,13 +34,15 @@ def analyze_chunks(chunks: List[str], api_key: str = None, use_mock: bool = Fals
     
     # Limit the number of chunks if specified
     if max_chunks is not None and max_chunks > 0:
-        print(f"Limiting analysis to the first {max_chunks} chunks (out of {len(chunks)} total)")
+        logger.info(f"Limiting analysis to the first {max_chunks} chunks (out of {len(chunks)} total)")
         chunks_to_analyze = chunks[:max_chunks]
     else:
         chunks_to_analyze = chunks
     
+    logger.info(f"Starting analysis of {len(chunks_to_analyze)} chunks out of {len(chunks)} total chunks")
+    
     for i, chunk in enumerate(chunks_to_analyze):
-        print(f"Analyzing chunk {i+1} of {len(chunks_to_analyze)}...")
+        logger.info(f"Analyzing chunk {i+1} of {len(chunks_to_analyze)}...")
         
         try:
             # Send to Claude for analysis and get results
@@ -444,6 +446,73 @@ def analyze_with_claude(text: str, api_key: str) -> Dict[str, Any]:
         logger.error(f"Error calling Claude API: {str(e)}")
         # Return mock data on request error
         return generate_mock_analysis()
+
+def analyze_single_thread(thread_content: str, api_key: str) -> Dict[str, Any]:
+    """
+    Analyze a single conversation thread using Claude AI
+    
+    Args:
+        thread_content: Text content of the conversation thread
+        api_key: Claude API key
+        
+    Returns:
+        Analysis results for the thread
+    """
+    logger.info("Analyzing single thread...")
+    
+    # Ensure API key is provided
+    if not api_key:
+        raise ValueError("Claude API key is required for thread analysis")
+    
+    try:
+        # Send to Claude for analysis
+        analysis = analyze_with_claude(thread_content, api_key)
+        logger.info("Thread analysis completed successfully")
+        
+        # Ensure the analysis has all necessary fields
+        required_fields = [
+            'categories', 'top_discussions', 'response_quality', 
+            'improvement_areas', 'user_satisfaction', 'unmet_needs',
+            'product_effectiveness', 'key_insights', 'negative_chats'
+        ]
+        
+        for field in required_fields:
+            if field not in analysis:
+                analysis[field] = {}
+        
+        return analysis
+        
+    except Exception as e:
+        error_msg = f"Error analyzing thread: {str(e)}"
+        logger.error(error_msg)
+        # Return a minimal structure that can be combined with other results
+        return {
+            "error": str(e),
+            "partial_analysis": {},
+            "categories": [],
+            "top_discussions": [],
+            "response_quality": {
+                "average_score": 0,
+                "good_examples": [],
+                "poor_examples": []
+            },
+            "improvement_areas": [],
+            "user_satisfaction": {
+                "overall_assessment": "",
+                "positive_indicators": [],
+                "negative_indicators": []
+            },
+            "unmet_needs": [],
+            "product_effectiveness": {
+                "assessment": "",
+                "strengths": [],
+                "weaknesses": []
+            },
+            "key_insights": [],
+            "negative_chats": {
+                "categories": []
+            }
+        }
 
 def combine_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """

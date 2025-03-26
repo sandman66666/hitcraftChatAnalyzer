@@ -1,0 +1,86 @@
+.analysis-results {
+  margin-top: 1rem;
+}
+
+.insight-card .card-header,
+.improvement-card .card-header,
+.needs-card .card-header {
+  display: flex;
+  align-items: center;
+  font-weight: 500;
+}
+
+.insight-card .card-header {
+  background-color: rgba(97, 218, 251, 0.1);
+  color: #0c8599;
+}
+
+.improvement-card .card-header {
+  background-color: rgba(255, 193, 7, 0.1);
+  color: #856404;
+}
+
+.needs-card .card-header {
+  background-color: rgba(220, 53, 69, 0.1);
+  color: #721c24;
+}
+
+.analysis-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.analysis-list li {
+  padding: 0.75rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  font-size: 0.95rem;
+}
+
+.analysis-list li:last-child {
+  border-bottom: none;
+}
+
+.analysis-list li.has-evidence {
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  position: relative;
+}
+
+.analysis-list li.has-evidence:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+.analysis-list li.has-evidence::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background-color: #61dafb;
+}
+
+.list-item-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.evidence-badge {
+  margin-left: 0.5rem;
+  font-size: 0.75rem;
+}
+
+/* Styles specifically for the supporting evidence feature */
+.insight-card .list-item-content .evidence-badge {
+  background-color: #17a2b8;
+}
+
+.improvement-card .list-item-content .evidence-badge {
+  background-color: #ffc107;
+}
+
+.needs-card .list-item-content .evidence-badge {
+  background-color: #dc3545;
+}

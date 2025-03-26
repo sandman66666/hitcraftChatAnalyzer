@@ -4,405 +4,390 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HitCraft Chat Analyzer</title>
+    
+    <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    
+    <!-- Google Font - Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    
     <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            padding-bottom: 2rem;
+        /* Custom CSS for the console-like log display */
+        .console-log {
             background-color: #f8f9fa;
-        }
-        .header {
-            background-color: #343a40;
-            color: white;
-            padding: 2rem 0;
-            margin-bottom: 2rem;
-        }
-        .card {
-            margin-bottom: 1.5rem;
-            border-radius: 0.5rem;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }
-        .nav-tabs .nav-link {
-            border-radius: 0.5rem 0.5rem 0 0;
-        }
-        .nav-tabs .nav-link.active {
-            font-weight: bold;
-            border-top: 3px solid #0d6efd;
-        }
-        .analysis-container {
-            display: none;
-        }
-        .api-key-input {
-            margin: 1rem 0;
-            position: relative;
-        }
-        .loading-spinner {
-            display: none;
-            text-align: center;
-            margin: 2rem 0;
-        }
-        .log-container {
-            background-color: #212529;
-            color: #adb5bd;
-            border-radius: 0.5rem;
-            padding: 1rem;
-            height: 300px;
-            overflow-y: auto;
+            border: 1px solid #dee2e6;
+            border-radius: 0 0 0.25rem 0.25rem;
             font-family: 'Courier New', monospace;
-            font-size: 0.9rem;
-            margin-bottom: 1rem;
+            font-size: 0.85rem;
+            height: 250px;
+            max-height: 250px;
+            overflow-y: auto;
+            padding: 0.5rem;
         }
+        
         .log-entry {
-            margin-bottom: 0.3rem;
+            margin-bottom: 0.25rem;
             white-space: pre-wrap;
             word-break: break-word;
         }
-        .log-timestamp {
+        
+        .log-time {
             color: #6c757d;
             margin-right: 0.5rem;
         }
-        .log-info {
-            color: #adb5bd;
-        }
-        .log-warning {
-            color: #ffc107;
-        }
-        .log-error {
-            color: #dc3545;
-        }
-        .log-container-tabs {
-            margin-top: 1rem;
-        }
-        .score-bubble {
-            display: inline-block;
-            width: 2.5rem;
-            height: 2.5rem;
-            line-height: 2.5rem;
-            text-align: center;
-            border-radius: 50%;
-            font-weight: bold;
-            color: white;
-            margin-right: 0.5rem;
-        }
-        .badge-count {
-            position: absolute;
-            top: -5px;
-            right: -5px;
-            background-color: #dc3545;
-            color: white;
-            border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 10px;
-            font-weight: bold;
-        }
-        .progress {
-            height: 1.5rem;
-            margin: 1rem 0;
-        }
-        .progress-bar {
-            transition: width 0.5s ease;
-        }
-        #logToggleBtn {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            z-index: 1000;
-            border-radius: 30px;
-            padding: 10px 20px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-        }
-        .collapsed-logs {
-            height: 150px !important;
-            transition: height 0.3s ease;
-        }
-        .expanded-logs {
-            height: 500px !important;
-            transition: height 0.3s ease;
-        }
-        #successMessage {
-            display: none;
-        }
-        .tooltip-inner {
-            max-width: 300px;
-        }
-        .example-container {
-            background-color: #f8f9fa;
+        
+        /* Styles for evidence in modal */
+        .chat-message {
+            padding: 0.5rem 1rem;
+            margin-bottom: 0.5rem;
             border-radius: 0.5rem;
-            padding: 1rem;
-            margin: 0.5rem 0;
-            border-left: 4px solid #6c757d;
         }
-        .good-example {
-            border-left-color: #28a745;
+        
+        .user-message {
+            background-color: #f0f2f5;
+            margin-right: 2rem;
         }
-        .poor-example {
-            border-left-color: #dc3545;
+        
+        .assistant-message {
+            background-color: #e3f2fd;
+            margin-left: 2rem;
         }
-        .insights-list li {
-            margin-bottom: 0.75rem;
+        
+        .chat-author {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
         }
-        .key-insight {
-            background-color: #e9f7fe;
-            padding: 1rem;
-            border-radius: 0.5rem;
-            border-left: 4px solid #17a2b8;
-            margin-bottom: 1rem;
+        
+        .chat-content {
+            margin-bottom: 0;
         }
-        #uploadForm {
-            background-color: white;
-            padding: 2rem;
-            border-radius: 0.5rem;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }
-        .custom-file-input {
-            cursor: pointer;
-        }
-        .mock-notice {
-            background-color: #fff3cd;
-            border-left: 4px solid #ffc107;
-            padding: 1rem;
-            margin-top: 1rem;
-            border-radius: 0.25rem;
-        }
-        .error-alert {
-            display: none;
-            margin-top: 1rem;
-        }
-        .clickable-insight {
+        
+        /* Clickable items styling */
+        .clickable-item {
             cursor: pointer;
             transition: background-color 0.2s;
+            border-left: 3px solid transparent;
         }
-        .clickable-insight:hover {
-            background-color: #f0f7ff;
+        
+        .clickable-item:hover {
+            background-color: rgba(13, 110, 253, 0.05);
+            border-left-color: #0d6efd;
         }
-        .clickable-indicator {
-            font-size: 0.8rem;
+        
+        .clickable-item.active {
+            background-color: rgba(13, 110, 253, 0.1);
+            border-left-color: #0d6efd;
+        }
+        
+        .evidence-icon {
+            margin-left: 0.5rem;
+            color: #6c757d;
+        }
+        
+        .clickable-item:hover .evidence-icon {
             color: #0d6efd;
-            font-style: italic;
         }
-        .chat-evidence {
-            background-color: #f8f9fa;
-            border-radius: 0.5rem;
-            padding: 1.5rem;
-            border-left: 4px solid #6c757d;
-            margin-bottom: 1rem;
+        
+        /* Insight cards custom styling */
+        .insight-card {
+            transition: all 0.2s;
+            border-left: 3px solid transparent;
         }
-        .conversation-title {
-            font-weight: bold;
-            color: #495057;
-            margin-bottom: 0.5rem;
+        
+        .insight-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+        }
+        
+        .insight-severity-high {
+            border-left-color: #dc3545;
+        }
+        
+        .insight-severity-medium {
+            border-left-color: #fd7e14;
+        }
+        
+        .insight-severity-low {
+            border-left-color: #0dcaf0;
         }
     </style>
 </head>
 <body>
-    <div class="header">
-        <div class="container">
-            <h1>HitCraft Chat Analyzer</h1>
-            <p class="lead">Upload chat logs for AI-powered analysis and insights</p>
+    <!-- App Container -->
+    <div class="app-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h3><i class="bi bi-lightning"></i> HitCraft</h3>
+                <p class="text-muted">Chat Analyzer</p>
+            </div>
+            
+            <div class="sidebar-menu">
+                <ul class="nav flex-column">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="#" id="threadCreatorNavBtn">
+                            <i class="bi bi-file-earmark-plus"></i> Upload File
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link disabled" href="#" id="threadAnalyzerNavBtn">
+                            <i class="bi bi-list-check"></i> Select Threads
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link disabled" href="#" id="dashboardNavBtn">
+                            <i class="bi bi-bar-chart"></i> View Results
+                        </a>
+                    </li>
+                </ul>
+            </div>
+            
+            <div class="sidebar-footer">
+                <p class="text-muted small"> 2025 HitCraft</p>
+            </div>
         </div>
-    </div>
-
-    <div class="container">
-        <div class="row">
-            <div class="col-lg-8 offset-lg-2">
-                <!-- File Upload Form -->
-                <div id="uploadForm" class="card">
-                    <div class="card-body">
-                        <h2 class="card-title mb-4">Upload Chat Logs</h2>
-                        <form id="chatLogForm">
-                            <div class="mb-3">
-                                <label for="fileInput" class="form-label">Select a chat log file (.txt or .rtf)</label>
-                                <input type="file" class="form-control" id="fileInput" accept=".txt,.rtf" required>
-                                <div class="form-text">Large files will be automatically chunked for processing.</div>
-                            </div>
-                            
-                            <div class="api-key-input">
-                                <label for="apiKeyInput" class="form-label">Claude API Key</label>
-                                <input type="password" class="form-control" id="apiKeyInput" placeholder="Enter your Claude API key" required>
-                                <div class="form-text">Your API key is not stored on our servers. Use "mock" for testing without an API key.</div>
-                            </div>
-
-                            <div class="d-grid">
-                                <button type="submit" class="btn btn-primary btn-lg">Analyze Chats</button>
-                            </div>
-                        </form>
-                    </div>
+        
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Thread Creator Screen -->
+            <div id="threadCreatorScreen" class="screen active">
+                <div class="screen-header">
+                    <h1>UPLOAD YOUR CHAT FILE</h1>
+                    <p class="text-muted">Simple file upload - click button below</p>
                 </div>
-
-                <!-- Error Alert -->
-                <div id="errorAlert" class="alert alert-danger error-alert" role="alert">
-                    <h4 class="alert-heading">Error</h4>
-                    <p id="errorMessage"></p>
-                </div>
-
-                <!-- Success Message -->
-                <div id="successMessage" class="alert alert-success" role="alert">
-                    <h4 class="alert-heading">File Uploaded Successfully!</h4>
-                    <p>Your file has been chunked into <span id="chunkCount">0</span> parts for analysis.</p>
-                </div>
-
-                <!-- Processing Logs -->
-                <div id="logContainer" class="card mt-4">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0">Processing Logs</h5>
-                        <button class="btn btn-sm btn-outline-secondary" id="toggleLogsBtn">Expand</button>
-                    </div>
-                    <div class="card-body p-0">
-                        <div id="logsContent" class="log-container"></div>
-                    </div>
-                </div>
-
-                <!-- Loading Spinner -->
-                <div id="loadingSpinner" class="loading-spinner">
-                    <div class="spinner-border text-primary" role="status">
-                        <span class="visually-hidden">Loading...</span>
-                    </div>
-                    <h4 class="mt-3">Analyzing conversations...</h4>
-                    <div class="progress">
-                        <div id="analysisProgress" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="width: 0%"></div>
-                    </div>
-                    <p id="progressText">Preparing analysis...</p>
-                </div>
-
-                <!-- Analysis Results -->
-                <div id="analysisResults" class="analysis-container">
-                    <div class="card">
+                
+                <div class="container">
+                    <!-- Simple Upload Card -->
+                    <div class="card mb-4">
+                        <div class="card-header bg-primary text-white">
+                            <h5 class="card-title mb-0">Simple File Upload</h5>
+                        </div>
                         <div class="card-body">
-                            <h2 class="card-title mb-4">Analysis Results</h2>
+                            <form id="upload-form" enctype="multipart/form-data">
+                                <div class="mb-3">
+                                    <input type="file" class="form-control" id="file" name="file" accept=".json,.txt,.csv">
+                                </div>
+                                <button type="submit" class="btn btn-primary btn-lg w-100">
+                                    UPLOAD FILE
+                                </button>
+                            </form>
+                            <div id="upload-status" class="alert mt-3 d-none"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Thread Analyzer Screen -->
+            <div id="threadAnalyzerScreen" class="screen">
+                <div class="screen-header">
+                    <h1>Select Threads</h1>
+                    <p class="text-muted">Analyze conversation threads to generate insights</p>
+                </div>
+                
+                <div class="container py-4">
+                    <!-- Analysis Stats Card -->
+                    <div class="card mb-4">
+                        <div class="card-header bg-primary text-white">
+                            <h5 class="card-title mb-0"><i class="bi bi-lightning"></i> Analysis Stats</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row align-items-center">
+                                <div class="col">
+                                    <div class="d-flex flex-wrap gap-4">
+                                        <div>
+                                            <h5>Available Threads</h5>
+                                            <h3 id="available-threads-count" class="mb-0">0</h3>
+                                        </div>
+                                        <div>
+                                            <h5>Previously Analyzed</h5>
+                                            <h3 id="previously-analyzed-count" class="mb-0">0</h3>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Thread Selection Card -->
+                    <div class="card mb-4" id="thread-selection-card">
+                        <div class="card-header bg-light">
+                            <h5 class="card-title mb-0"><i class="bi bi-sliders"></i> Select Threads to Analyze</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-4">
+                                <label for="thread-count-slider" class="form-label d-flex justify-content-between">
+                                    <span>Number of threads to analyze</span>
+                                    <span class="badge bg-primary" id="thread-count-value">10</span>
+                                </label>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="option-range-min">1</span>
+                                    <input type="range" class="form-range flex-grow-1" id="thread-count-slider" 
+                                        min="1" max="100" value="10">
+                                    <span class="option-range-max" id="thread-count-max">100</span>
+                                </div>
+                                <div class="d-flex justify-content-between mt-1">
+                                    <span class="form-text">Faster analysis</span>
+                                    <span class="form-text">More comprehensive results</span>
+                                </div>
+                            </div>
                             
-                            <!-- Navigation Tabs -->
-                            <ul class="nav nav-tabs" id="analysisTab" role="tablist">
-                                <li class="nav-item" role="presentation">
-                                    <button class="nav-link active" id="overview-tab" data-bs-toggle="tab" data-bs-target="#overview" type="button" role="tab" aria-controls="overview" aria-selected="true">Overview</button>
-                                </li>
-                                <li class="nav-item" role="presentation">
-                                    <button class="nav-link" id="categories-tab" data-bs-toggle="tab" data-bs-target="#categories" type="button" role="tab" aria-controls="categories" aria-selected="false">Categories</button>
-                                </li>
-                                <li class="nav-item" role="presentation">
-                                    <button class="nav-link" id="quality-tab" data-bs-toggle="tab" data-bs-target="#quality" type="button" role="tab" aria-controls="quality" aria-selected="false">Response Quality</button>
-                                </li>
-                                <li class="nav-item" role="presentation">
-                                    <button class="nav-link" id="improvements-tab" data-bs-toggle="tab" data-bs-target="#improvements" type="button" role="tab" aria-controls="improvements" aria-selected="false">Improvements</button>
-                                </li>
-                                <li class="nav-item" role="presentation">
-                                    <button class="nav-link" id="satisfaction-tab" data-bs-toggle="tab" data-bs-target="#satisfaction" type="button" role="tab" aria-controls="satisfaction" aria-selected="false">User Satisfaction</button>
-                                </li>
-                            </ul>
+                            <div class="d-grid">
+                                <button id="start-analysis-btn" class="btn btn-primary btn-lg">
+                                    <i class="bi bi-lightning"></i> Start Analysis
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Analysis Progress Card -->
+                    <div class="card mb-4 d-none" id="analysis-progress-card">
+                        <div class="card-header bg-primary text-white">
+                            <h5 class="card-title mb-0"><i class="bi bi-lightning"></i> Analysis Progress</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <div class="d-flex justify-content-between mb-2">
+                                    <h5>Analyzing threads: <span id="threads-analyzed">0</span> of <span id="threads-total">0</span></h5>
+                                    <h5><span id="analysis-percent">0%</span> complete</h5>
+                                </div>
+                                
+                                <div class="progress mb-3" style="height: 20px;">
+                                    <div id="analysis-progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                                        role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="width: 0%">
+                                    </div>
+                                </div>
+                            </div>
                             
-                            <!-- Tab Content -->
-                            <div class="tab-content p-3" id="analysisTabContent">
-                                <!-- Overview Tab -->
-                                <div class="tab-pane fade show active" id="overview" role="tabpanel" aria-labelledby="overview-tab">
-                                    <h3 class="mb-4">Key Insights</h3>
-                                    <div id="keyInsights">
-                                        <!-- Key insights will be populated here -->
-                                    </div>
-                                    
-                                    <h3 class="mb-3 mt-4">Top 5 Discussion Topics</h3>
-                                    <div id="topDiscussions">
-                                        <!-- Top discussions will be populated here -->
-                                    </div>
-                                    
-                                    <div class="row mt-4">
-                                        <div class="col-md-6">
-                                            <div class="card">
-                                                <div class="card-body">
-                                                    <h5 class="card-title">Product Effectiveness</h5>
-                                                    <p id="productEffectiveness">Loading...</p>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <div class="card">
-                                                <div class="card-body">
-                                                    <h5 class="card-title">Overall Response Quality</h5>
-                                                    <div class="d-flex align-items-center">
-                                                        <div id="qualityScoreBubble" class="score-bubble bg-primary">0</div>
-                                                        <span id="qualityScore">Loading...</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
+                            <div class="mb-3 d-flex justify-content-between">
+                                <button id="view-dashboard-btn" class="btn btn-outline-primary">
+                                    <i class="bi bi-graph-up"></i> View Dashboard
+                                </button>
                                 
-                                <!-- Categories Tab -->
-                                <div class="tab-pane fade" id="categories" role="tabpanel" aria-labelledby="categories-tab">
-                                    <h3 class="mb-4">Conversation Categories</h3>
-                                    <p class="text-muted">The main categories of conversations identified in the chat logs:</p>
-                                    <div id="categoriesList">
-                                        <!-- Categories will be populated here -->
-                                    </div>
+                                <button id="cancel-analysis-btn" class="btn btn-outline-danger">
+                                    <i class="bi bi-x-circle"></i> Cancel Analysis
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Processing Logs Card -->
+                    <div class="card" id="logs-card">
+                        <div class="card-header bg-secondary text-white">
+                            <h5 class="card-title mb-0">Processing Logs</h5>
+                        </div>
+                        <div class="card-body p-0">
+                            <div id="processing-log" class="console-log"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Dashboard Screen -->
+            <div id="dashboardScreen" class="screen">
+                <div class="screen-header">
+                    <h1>View Results</h1>
+                    <p class="text-muted">Insights from your conversations</p>
+                </div>
+                
+                <div class="dashboard-container">
+                    <!-- Overview Section -->
+                    <div class="dashboard-row">
+                        <div class="dashboard-card overview-card">
+                            <div class="card-header-custom">
+                                <h3><i class="bi bi-lightning"></i> Quality Score</h3>
+                            </div>
+                            <div class="card-body-custom d-flex align-items-center">
+                                <div id="quality-score-bubble" class="score-bubble bg-primary">0</div>
+                                <div>
+                                    <h2 id="quality-score">0/10</h2>
+                                    <p class="text-muted mb-0">Overall response quality</p>
                                 </div>
-                                
-                                <!-- Response Quality Tab -->
-                                <div class="tab-pane fade" id="quality" role="tabpanel" aria-labelledby="quality-tab">
-                                    <h3 class="mb-4">Response Quality Analysis</h3>
-                                    <div class="mb-4">
-                                        <h4>Good Response Examples</h4>
-                                        <div id="goodExamples">
-                                            <!-- Good examples will be populated here -->
-                                        </div>
-                                    </div>
-                                    
-                                    <div class="mb-4">
-                                        <h4>Areas for Improvement</h4>
-                                        <div id="poorExamples">
-                                            <!-- Poor examples will be populated here -->
-                                        </div>
-                                    </div>
+                            </div>
+                        </div>
+                        
+                        <div class="dashboard-card overview-card">
+                            <div class="card-header-custom">
+                                <h3><i class="bi bi-chat-heart"></i> User Satisfaction</h3>
+                            </div>
+                            <div class="card-body-custom d-flex align-items-center">
+                                <div id="satisfaction-score-bubble" class="score-bubble bg-success">0</div>
+                                <div>
+                                    <h2 id="satisfaction-score">0/10</h2>
+                                    <p class="text-muted mb-0">Based on conversation sentiment</p>
                                 </div>
-                                
-                                <!-- Improvements Tab -->
-                                <div class="tab-pane fade" id="improvements" role="tabpanel" aria-labelledby="improvements-tab">
-                                    <h3 class="mb-4">Suggested Improvements</h3>
-                                    <div class="row">
-                                        <div class="col-md-6">
-                                            <h4>Improvement Areas</h4>
-                                            <div id="improvementAreas">
-                                                <!-- Improvement areas will be populated here -->
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <h4>Unmet User Needs</h4>
-                                            <div id="unmetNeeds">
-                                                <!-- Unmet needs will be populated here -->
-                                            </div>
-                                        </div>
-                                    </div>
+                            </div>
+                        </div>
+                        
+                        <div class="dashboard-card overview-card">
+                            <div class="card-header-custom">
+                                <h3><i class="bi bi-folder"></i> Categories</h3>
+                            </div>
+                            <div class="card-body-custom">
+                                <div id="categories-list" class="tags-container">
+                                    <!-- Categories will be added here -->
                                 </div>
-                                
-                                <!-- User Satisfaction Tab -->
-                                <div class="tab-pane fade" id="satisfaction" role="tabpanel" aria-labelledby="satisfaction-tab">
-                                    <h3 class="mb-4">User Satisfaction Analysis</h3>
-                                    <p id="satisfactionOverview">Loading...</p>
-                                    
-                                    <div class="row mt-4">
-                                        <div class="col-md-6">
-                                            <div class="card">
-                                                <div class="card-body">
-                                                    <h5 class="card-title">Positive Indicators</h5>
-                                                    <ul id="positiveIndicators" class="insights-list">
-                                                        <!-- Positive indicators will be populated here -->
-                                                    </ul>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <div class="card">
-                                                <div class="card-body">
-                                                    <h5 class="card-title">Negative Indicators</h5>
-                                                    <ul id="negativeIndicators" class="insights-list">
-                                                        <!-- Negative indicators will be populated here -->
-                                                    </ul>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Insights Section -->
+                    <div class="dashboard-row">
+                        <div class="dashboard-card full-width">
+                            <div class="card-header-custom d-flex justify-content-between">
+                                <h3><i class="bi bi-lightbulb"></i> Key Insights</h3>
+                                <span class="badge rounded-pill bg-primary" id="insights-count">0</span>
+                            </div>
+                            <div class="card-body-custom">
+                                <div id="insightsList" class="expandable-list">
+                                    <!-- Insights will be added here -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Improvement Areas and Unmet Needs -->
+                    <div class="dashboard-row">
+                        <div class="dashboard-card half-width">
+                            <div class="card-header-custom d-flex justify-content-between">
+                                <h3><i class="bi bi-arrow-up-circle"></i> Improvement Areas</h3>
+                                <span class="badge rounded-pill bg-warning text-dark" id="improvements-count">0</span>
+                            </div>
+                            <div class="card-body-custom">
+                                <div id="improvementsList" class="expandable-list">
+                                    <!-- Improvement areas will be added here -->
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="dashboard-card half-width">
+                            <div class="card-header-custom d-flex justify-content-between">
+                                <h3><i class="bi bi-exclamation-circle"></i> Unmet Needs</h3>
+                                <span class="badge rounded-pill bg-info" id="unmet-needs-count">0</span>
+                            </div>
+                            <div class="card-body-custom">
+                                <div id="unmetNeedsList" class="expandable-list">
+                                    <!-- Unmet needs will be added here -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Negative Chats -->
+                    <div class="dashboard-row">
+                        <div class="dashboard-card full-width">
+                            <div class="card-header-custom d-flex justify-content-between">
+                                <h3><i class="bi bi-exclamation-triangle"></i> Negative Interactions</h3>
+                                <span class="badge rounded-pill bg-danger" id="negative-chats-count">0</span>
+                            </div>
+                            <div class="card-body-custom">
+                                <div id="negativeChatsList" class="expandable-list negative-chats-list">
+                                    <!-- Negative chats will be added here -->
                                 </div>
                             </div>
                         </div>
@@ -411,8 +396,8 @@
             </div>
         </div>
     </div>
-
-    <!-- Modal for displaying evidence -->
+    
+    <!-- Evidence Modal -->
     <div class="modal fade" id="evidenceModal" tabindex="-1" aria-labelledby="evidenceModalLabel" aria-hidden="true">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
@@ -420,8 +405,8 @@
                     <h5 class="modal-title" id="evidenceModalLabel">Supporting Evidence</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
-                <div class="modal-body">
-                    <div id="evidenceContent"></div>
+                <div class="modal-body" id="evidenceModalBody">
+                    <!-- Evidence content will be dynamically added here -->
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
@@ -430,517 +415,101 @@
         </div>
     </div>
 
+    <!-- Bootstrap and Custom JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='js/upload-handler.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/results-display.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/ui-manager.js') }}"></script>
+    
     <script>
+        // UI Navigation
+        function showScreen(screenId) {
+            // Hide all screens
+            document.querySelectorAll('.screen').forEach(screen => {
+                screen.classList.remove('active');
+            });
+            
+            // Show the requested screen
+            const targetScreen = document.getElementById(screenId);
+            if (targetScreen) {
+                targetScreen.classList.add('active');
+            }
+            
+            // Update active nav link
+            document.querySelectorAll('.sidebar-menu .nav-link').forEach(link => {
+                link.classList.remove('active');
+            });
+            
+            // Map screen IDs to nav buttons
+            const screenToNav = {
+                'threadCreatorScreen': 'threadCreatorNavBtn',
+                'threadAnalyzerScreen': 'threadAnalyzerNavBtn',
+                'dashboardScreen': 'dashboardNavBtn',
+                'processingScreen': null
+            };
+            
+            // Activate the corresponding nav button
+            const navBtnId = screenToNav[screenId];
+            if (navBtnId) {
+                document.getElementById(navBtnId).classList.add('active');
+            }
+        }
+        
+        function showProcessingScreen(title) {
+            // Show the processing screen
+            showScreen('processingScreen');
+            
+            // Update the processing title if provided
+            const processingTitle = document.getElementById('processing-title');
+            if (processingTitle && title) {
+                processingTitle.textContent = title;
+            }
+        }
+        
+        function showMessage(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            if (element) {
+                element.textContent = message;
+                element.className = `alert alert-${type} mt-4`;
+                element.classList.remove('d-none');
+                
+                // Auto-hide after 5 seconds
+                setTimeout(() => {
+                    element.classList.add('d-none');
+                }, 5000);
+            }
+        }
+        
+        function enableResultsNavigation() {
+            // Enable results navigation
+            document.querySelectorAll('.sidebar-menu .nav-link.disabled').forEach(link => {
+                link.classList.remove('disabled');
+            });
+        }
+        
+        // Set up navigation events
         document.addEventListener('DOMContentLoaded', function() {
-            const chatLogForm = document.getElementById('chatLogForm');
-            const fileInput = document.getElementById('fileInput');
-            const apiKeyInput = document.getElementById('apiKeyInput');
-            const uploadForm = document.getElementById('uploadForm');
-            const successMessage = document.getElementById('successMessage');
-            const loadingSpinner = document.getElementById('loadingSpinner');
-            const analysisResults = document.getElementById('analysisResults');
-            const analysisProgress = document.getElementById('analysisProgress');
-            const progressText = document.getElementById('progressText');
-            const chunkCount = document.getElementById('chunkCount');
-            const logsContent = document.getElementById('logsContent');
-            const errorAlert = document.getElementById('errorAlert');
-            const errorMessage = document.getElementById('errorMessage');
-            const toggleLogsBtn = document.getElementById('toggleLogsBtn');
-            
-            // Toggle logs expand/collapse
-            toggleLogsBtn.addEventListener('click', function() {
-                const logContainer = document.getElementById('logsContent');
-                if (logContainer.classList.contains('expanded-logs')) {
-                    logContainer.classList.remove('expanded-logs');
-                    logContainer.classList.add('collapsed-logs');
-                    toggleLogsBtn.textContent = 'Expand';
-                } else {
-                    logContainer.classList.remove('collapsed-logs');
-                    logContainer.classList.add('expanded-logs');
-                    toggleLogsBtn.textContent = 'Collapse';
-                }
-            });
-            
-            // Poll for logs periodically
-            function fetchLogs() {
-                fetch('/logs')
-                    .then(response => response.json())
-                    .then(logs => {
-                        if (logs && logs.length > 0) {
-                            logsContent.innerHTML = '';
-                            logs.forEach(log => {
-                                const logEntry = document.createElement('div');
-                                logEntry.className = `log-entry log-${log.level}`;
-                                
-                                const timestamp = document.createElement('span');
-                                timestamp.className = 'log-timestamp';
-                                timestamp.textContent = log.timestamp;
-                                
-                                logEntry.appendChild(timestamp);
-                                logEntry.appendChild(document.createTextNode(log.message));
-                                logsContent.appendChild(logEntry);
-                            });
-                            
-                            // Auto-scroll to bottom
-                            logsContent.scrollTop = logsContent.scrollHeight;
-                        }
-                    })
-                    .catch(error => console.error('Error fetching logs:', error));
-            }
-            
-            // Start polling for logs every 2 seconds
-            setInterval(fetchLogs, 2000);
-            
-            // Form submission handler
-            chatLogForm.addEventListener('submit', function(e) {
+            // Set up navigation click handlers
+            document.getElementById('threadCreatorNavBtn').addEventListener('click', function(e) {
                 e.preventDefault();
-                
-                if (!fileInput.files.length) {
-                    showError('Please select a file to upload.');
-                    return;
-                }
-                
-                if (!apiKeyInput.value.trim()) {
-                    showError('Please enter your Claude API key or use "mock" for testing.');
-                    return;
-                }
-                
-                // Hide any previous errors
-                errorAlert.style.display = 'none';
-                
-                const formData = new FormData();
-                formData.append('file', fileInput.files[0]);
-                
-                // Upload the file first
-                uploadFile(formData);
+                showScreen('threadCreatorScreen');
             });
             
-            function showError(message) {
-                errorMessage.textContent = message;
-                errorAlert.style.display = 'block';
-                window.scrollTo({ top: errorAlert.offsetTop, behavior: 'smooth' });
-            }
+            document.getElementById('threadAnalyzerNavBtn').addEventListener('click', function(e) {
+                e.preventDefault();
+                if (!this.classList.contains('disabled')) {
+                    showScreen('threadAnalyzerScreen');
+                }
+            });
             
-            function uploadFile(formData) {
-                // Show loading state
-                uploadForm.style.display = 'none';
-                loadingSpinner.style.display = 'block';
-                progressText.textContent = 'Uploading and chunking file...';
-                
-                // Start the progress animation
-                progressCounter = 0;
-                updateAnalysisProgress();
-                
-                fetch('/upload', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.error) {
-                        throw new Error(data.error);
-                    }
-                    
-                    // Update UI with success message
-                    successMessage.style.display = 'block';
-                    chunkCount.textContent = data.chunk_count;
-                    
-                    // Start the analysis
-                    progressText.textContent = 'Starting analysis...';
-                    analysisProgress.style.width = '25%';
-                    
-                    return analyzeChunks(data.chunk_count);
-                })
-                .catch(error => {
-                    showError('Upload Error: ' + error.message);
-                    uploadForm.style.display = 'block';
-                    loadingSpinner.style.display = 'none';
-                    successMessage.style.display = 'none';
-                });
-            }
+            document.getElementById('dashboardNavBtn').addEventListener('click', function(e) {
+                e.preventDefault();
+                if (!this.classList.contains('disabled')) {
+                    showScreen('dashboardScreen');
+                }
+            });
             
-            function analyzeChunks(totalChunks) {
-                // Send the Claude API key and trigger analysis
-                fetch('/analyze', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        api_key: apiKeyInput.value
-                    })
-                })
-                .then(response => {
-                    if (!response.ok) {
-                        return response.json().then(data => {
-                            throw new Error(data.error || 'Analysis failed');
-                        });
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    if (data.error) {
-                        throw new Error(data.error);
-                    }
-                    
-                    // Update progress to 100%
-                    analysisProgress.style.width = '100%';
-                    progressText.textContent = 'Analysis complete!';
-                    
-                    // Hide loading elements and show results
-                    setTimeout(() => {
-                        loadingSpinner.style.display = 'none';
-                        successMessage.style.display = 'none';
-                        analysisResults.style.display = 'block';
-                        
-                        // Scroll to results
-                        window.scrollTo({ top: analysisResults.offsetTop, behavior: 'smooth' });
-                        
-                        // Populate the results
-                        displayResults(data.analysis);
-                    }, 1000);
-                })
-                .catch(error => {
-                    showError('Analysis Error: ' + error.message);
-                    loadingSpinner.style.display = 'none';
-                    uploadForm.style.display = 'block';
-                });
-            }
-            
-            function displayResults(analysis) {
-                console.log("Displaying analysis results:", analysis);
-                
-                // Key Insights
-                const keyInsightsElem = document.getElementById('keyInsights');
-                keyInsightsElem.innerHTML = '';
-                if (analysis && analysis.key_insights && analysis.key_insights.length) {
-                    analysis.key_insights.forEach(insight => {
-                        const insightElem = document.createElement('div');
-                        insightElem.className = 'key-insight';
-                        
-                        // Handle both string and object formats (for backward compatibility)
-                        if (typeof insight === 'object' && insight.insight) {
-                            insightElem.textContent = insight.insight;
-                            
-                            // If there's supporting evidence, make it clickable
-                            if (insight.supporting_evidence && insight.supporting_evidence.length) {
-                                insightElem.classList.add('clickable-insight');
-                                insightElem.title = 'Click to view supporting evidence';
-                                insightElem.onclick = function() {
-                                    showEvidence(insight.insight, insight.supporting_evidence);
-                                };
-                                
-                                // Add a small indicator that this is clickable
-                                const indicatorElem = document.createElement('small');
-                                indicatorElem.className = 'clickable-indicator';
-                                indicatorElem.innerHTML = '[Click to view examples]';
-                                insightElem.appendChild(document.createElement('br'));
-                                insightElem.appendChild(indicatorElem);
-                            }
-                        } else {
-                            insightElem.textContent = insight;
-                        }
-                        
-                        keyInsightsElem.appendChild(insightElem);
-                    });
-                } else {
-                    keyInsightsElem.innerHTML = '<p class="text-muted">No key insights available.</p>';
-                }
-                
-                // Top Discussions
-                const topDiscussionsElem = document.getElementById('topDiscussions');
-                topDiscussionsElem.innerHTML = '';
-                if (analysis && analysis.top_discussions && analysis.top_discussions.length) {
-                    const listElem = document.createElement('ol');
-                    listElem.className = 'insights-list';
-                    
-                    analysis.top_discussions.forEach(topic => {
-                        const listItem = document.createElement('li');
-                        if (typeof topic === 'object' && topic.topic) {
-                            listItem.innerHTML = `<strong>${topic.topic}</strong> ${topic.count ? `(${topic.count} instances)` : ''}`;
-                        } else {
-                            listItem.textContent = topic;
-                        }
-                        listElem.appendChild(listItem);
-                    });
-                    
-                    topDiscussionsElem.appendChild(listElem);
-                } else {
-                    topDiscussionsElem.innerHTML = '<p class="text-muted">No top discussions available.</p>';
-                }
-                
-                // Product Effectiveness
-                const productEffectivenessElem = document.getElementById('productEffectiveness');
-                if (analysis && analysis.product_effectiveness) {
-                    if (typeof analysis.product_effectiveness === 'object') {
-                        productEffectivenessElem.textContent = analysis.product_effectiveness.assessment || 'No assessment available.';
-                    } else {
-                        productEffectivenessElem.textContent = analysis.product_effectiveness;
-                    }
-                } else {
-                    productEffectivenessElem.textContent = 'No product effectiveness assessment available.';
-                }
-                
-                // Quality Score
-                const qualityScoreElem = document.getElementById('qualityScore');
-                const qualityScoreBubbleElem = document.getElementById('qualityScoreBubble');
-                
-                if (analysis && analysis.response_quality && analysis.response_quality.average_score) {
-                    const score = analysis.response_quality.average_score;
-                    qualityScoreElem.textContent = `${score.toFixed(1)} / 10`;
-                    qualityScoreBubbleElem.textContent = score.toFixed(1);
-                    
-                    // Change color based on score
-                    if (score >= 8) {
-                        qualityScoreBubbleElem.className = 'score-bubble bg-success';
-                    } else if (score >= 6) {
-                        qualityScoreBubbleElem.className = 'score-bubble bg-primary';
-                    } else if (score >= 4) {
-                        qualityScoreBubbleElem.className = 'score-bubble bg-warning';
-                    } else {
-                        qualityScoreBubbleElem.className = 'score-bubble bg-danger';
-                    }
-                } else {
-                    qualityScoreElem.textContent = 'No score available';
-                    qualityScoreBubbleElem.textContent = 'N/A';
-                    qualityScoreBubbleElem.className = 'score-bubble bg-secondary';
-                }
-                
-                // Categories
-                const categoriesListElem = document.getElementById('categoriesList');
-                categoriesListElem.innerHTML = '';
-                if (analysis && analysis.categories && analysis.categories.length) {
-                    const listElem = document.createElement('ul');
-                    listElem.className = 'insights-list';
-                    
-                    analysis.categories.forEach(category => {
-                        const listItem = document.createElement('li');
-                        listItem.textContent = category;
-                        listElem.appendChild(listItem);
-                    });
-                    
-                    categoriesListElem.appendChild(listElem);
-                } else {
-                    categoriesListElem.innerHTML = '<p class="text-muted">No categories available.</p>';
-                }
-                
-                // Response Quality Examples
-                const goodExamplesElem = document.getElementById('goodExamples');
-                goodExamplesElem.innerHTML = '';
-                if (analysis && analysis.response_quality && analysis.response_quality.good_examples && analysis.response_quality.good_examples.length) {
-                    analysis.response_quality.good_examples.forEach(example => {
-                        const exampleElem = document.createElement('div');
-                        exampleElem.className = 'example-container good-example';
-                        exampleElem.textContent = example;
-                        goodExamplesElem.appendChild(exampleElem);
-                    });
-                } else {
-                    goodExamplesElem.innerHTML = '<p class="text-muted">No good response examples available.</p>';
-                }
-                
-                const poorExamplesElem = document.getElementById('poorExamples');
-                poorExamplesElem.innerHTML = '';
-                if (analysis && analysis.response_quality && analysis.response_quality.poor_examples && analysis.response_quality.poor_examples.length) {
-                    analysis.response_quality.poor_examples.forEach(example => {
-                        const exampleElem = document.createElement('div');
-                        exampleElem.className = 'example-container poor-example';
-                        exampleElem.textContent = example;
-                        poorExamplesElem.appendChild(exampleElem);
-                    });
-                } else {
-                    poorExamplesElem.innerHTML = '<p class="text-muted">No areas for improvement examples available.</p>';
-                }
-                
-                // Improvement Areas
-                const improvementAreasElem = document.getElementById('improvementAreas');
-                improvementAreasElem.innerHTML = '';
-                if (analysis && analysis.improvement_areas && analysis.improvement_areas.length) {
-                    const listElem = document.createElement('ul');
-                    listElem.className = 'insights-list';
-                    
-                    analysis.improvement_areas.forEach(area => {
-                        const listItem = document.createElement('li');
-                        
-                        // Handle both string and object formats
-                        if (typeof area === 'object' && area.area) {
-                            listItem.textContent = area.area;
-                            
-                            // If there's supporting evidence, make it clickable
-                            if (area.supporting_evidence && area.supporting_evidence.length) {
-                                listItem.classList.add('clickable-insight');
-                                listItem.title = 'Click to view supporting evidence';
-                                listItem.onclick = function() {
-                                    showEvidence(area.area, area.supporting_evidence);
-                                };
-                                
-                                // Add a small indicator that this is clickable
-                                const indicatorElem = document.createElement('small');
-                                indicatorElem.className = 'clickable-indicator';
-                                indicatorElem.innerHTML = '[Click to view examples]';
-                                listItem.appendChild(document.createElement('br'));
-                                listItem.appendChild(indicatorElem);
-                            }
-                        } else {
-                            listItem.textContent = area;
-                        }
-                        
-                        listElem.appendChild(listItem);
-                    });
-                    
-                    improvementAreasElem.appendChild(listElem);
-                } else {
-                    improvementAreasElem.innerHTML = '<p class="text-muted">No improvement areas available.</p>';
-                }
-                
-                // Unmet Needs
-                const unmetNeedsElem = document.getElementById('unmetNeeds');
-                unmetNeedsElem.innerHTML = '';
-                if (analysis && analysis.unmet_needs && analysis.unmet_needs.length) {
-                    const listElem = document.createElement('ul');
-                    listElem.className = 'insights-list';
-                    
-                    analysis.unmet_needs.forEach(need => {
-                        const listItem = document.createElement('li');
-                        
-                        // Handle both string and object formats
-                        if (typeof need === 'object' && need.need) {
-                            listItem.textContent = need.need;
-                            
-                            // If there's supporting evidence, make it clickable
-                            if (need.supporting_evidence && need.supporting_evidence.length) {
-                                listItem.classList.add('clickable-insight');
-                                listItem.title = 'Click to view supporting evidence';
-                                listItem.onclick = function() {
-                                    showEvidence(need.need, need.supporting_evidence);
-                                };
-                                
-                                // Add a small indicator that this is clickable
-                                const indicatorElem = document.createElement('small');
-                                indicatorElem.className = 'clickable-indicator';
-                                indicatorElem.innerHTML = '[Click to view examples]';
-                                listItem.appendChild(document.createElement('br'));
-                                listItem.appendChild(indicatorElem);
-                            }
-                        } else {
-                            listItem.textContent = need;
-                        }
-                        
-                        listElem.appendChild(listItem);
-                    });
-                    
-                    unmetNeedsElem.appendChild(listElem);
-                } else {
-                    unmetNeedsElem.innerHTML = '<p class="text-muted">No unmet needs identified.</p>';
-                }
-                
-                // User Satisfaction
-                const satisfactionOverviewElem = document.getElementById('satisfactionOverview');
-                if (analysis && analysis.user_satisfaction) {
-                    if (typeof analysis.user_satisfaction === 'object') {
-                        satisfactionOverviewElem.textContent = analysis.user_satisfaction.overall_assessment || 'No assessment available.';
-                    } else {
-                        satisfactionOverviewElem.textContent = analysis.user_satisfaction;
-                    }
-                } else {
-                    satisfactionOverviewElem.textContent = 'No user satisfaction assessment available.';
-                }
-                
-                // Positive Indicators
-                const positiveIndicatorsElem = document.getElementById('positiveIndicators');
-                positiveIndicatorsElem.innerHTML = '';
-                if (analysis && analysis.user_satisfaction && analysis.user_satisfaction.positive_indicators && analysis.user_satisfaction.positive_indicators.length) {
-                    analysis.user_satisfaction.positive_indicators.forEach(indicator => {
-                        const listItem = document.createElement('li');
-                        listItem.textContent = indicator;
-                        positiveIndicatorsElem.appendChild(listItem);
-                    });
-                } else {
-                    positiveIndicatorsElem.innerHTML = '<li class="text-muted">No positive indicators available.</li>';
-                }
-                
-                // Negative Indicators
-                const negativeIndicatorsElem = document.getElementById('negativeIndicators');
-                negativeIndicatorsElem.innerHTML = '';
-                if (analysis && analysis.user_satisfaction && analysis.user_satisfaction.negative_indicators && analysis.user_satisfaction.negative_indicators.length) {
-                    analysis.user_satisfaction.negative_indicators.forEach(indicator => {
-                        const listItem = document.createElement('li');
-                        listItem.textContent = indicator;
-                        negativeIndicatorsElem.appendChild(listItem);
-                    });
-                } else {
-                    negativeIndicatorsElem.innerHTML = '<li class="text-muted">No negative indicators available.</li>';
-                }
-            }
-            
-            // Function to show evidence in modal
-            function showEvidence(title, evidenceItems) {
-                // Set the modal title
-                const modalTitle = document.getElementById('evidenceModalLabel');
-                modalTitle.textContent = 'Evidence: ' + title;
-                
-                // Populate the evidence content
-                const evidenceContent = document.getElementById('evidenceContent');
-                evidenceContent.innerHTML = '';
-                
-                if (evidenceItems && evidenceItems.length) {
-                    evidenceItems.forEach((item, index) => {
-                        const evidenceElem = document.createElement('div');
-                        evidenceElem.className = 'chat-evidence mb-3 p-3 border-bottom';
-                        
-                        // Format the evidence with styling
-                        const formattedText = formatChatEvidence(item);
-                        evidenceElem.innerHTML = formattedText;
-                        
-                        evidenceContent.appendChild(evidenceElem);
-                    });
-                } else {
-                    evidenceContent.innerHTML = '<p class="text-muted">No supporting evidence available.</p>';
-                }
-                
-                // Show the modal
-                const evidenceModal = new bootstrap.Modal(document.getElementById('evidenceModal'));
-                evidenceModal.show();
-            }
-            
-            // Function to format chat evidence with styling
-            function formatChatEvidence(text) {
-                // Split into parts for "Conversation #X: " prefix
-                const conversationMatch = text.match(/^(Conversation #\d+:)\s(.*)/);
-                
-                if (conversationMatch) {
-                    const prefix = conversationMatch[1];
-                    const content = conversationMatch[2];
-                    
-                    // Further format the content to highlight user vs assistant
-                    const formattedContent = content
-                        .replace(/User:/g, '<strong class="text-primary">User:</strong>')
-                        .replace(/Assistant:/g, '<strong class="text-success">Assistant:</strong>');
-                    
-                    return `<div class="conversation-title text-secondary mb-2">${prefix}</div>${formattedContent}`;
-                }
-                
-                return text;
-            }
-            
-            // Initialize analysis progress counter
-            let progressCounter = 0;
-            function updateAnalysisProgress() {
-                if (progressCounter < 90) {
-                    progressCounter += 5;
-                    analysisProgress.style.width = progressCounter + '%';
-                    
-                    if (progressCounter < 30) {
-                        progressText.textContent = 'Analyzing chat structure...';
-                    } else if (progressCounter < 60) {
-                        progressText.textContent = 'Identifying user satisfaction metrics...';
-                    } else {
-                        progressText.textContent = 'Compiling insights...';
-                    }
-                    
-                    setTimeout(updateAnalysisProgress, 1000);
-                }
-            }
+            console.log('Navigation setup complete!');
         });
     </script>
 </body>
