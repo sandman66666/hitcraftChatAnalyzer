@@ -1,8 +1,11 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Card } from 'react-bootstrap';
+import { useAnalyzer } from '../../context/AnalyzerContext';
 import './ProcessingLog.css';
 
-const ProcessingLog = ({ logs }) => {
+const ProcessingLog = () => {
+  const { state } = useAnalyzer();
+  const { logs } = state;
   const logEndRef = useRef(null);
   
   // Auto-scroll to the bottom when new logs arrive
@@ -31,7 +34,7 @@ const ProcessingLog = ({ logs }) => {
       <Card.Header>Processing Log</Card.Header>
       <Card.Body>
         <div className="log-container">
-          {logs.length === 0 ? (
+          {!logs || logs.length === 0 ? (
             <p className="text-muted text-center">No logs available yet.</p>
           ) : (
             logs.map((log, index) => (

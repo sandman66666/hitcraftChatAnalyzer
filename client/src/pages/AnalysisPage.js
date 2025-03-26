@@ -1,397 +1,356 @@
-import React, { useEffect, useState } from 'react';
-import { Row, Col, Card, Button, ProgressBar, Alert } from 'react-bootstrap';
-import { FaSync, FaCheck, FaTimesCircle } from 'react-icons/fa';
-import AnalysisResults from '../components/analysis/AnalysisResults';
-import ProcessingLog from '../components/common/ProcessingLog';
+import React, { useState, useEffect } from 'react';
 import { useAnalyzer } from '../context/AnalyzerContext';
-import api from '../services/api';
+import LoadingIndicator from '../components/common/LoadingIndicator';
 import './Pages.css';
+import api from '../services/api';
+import AnalysisResults from '../components/analysis/AnalysisResults';
+import EvidenceModal from '../components/analysis/EvidenceModal';
 
 const AnalysisPage = () => {
   const { state, actions } = useAnalyzer();
-  const { 
-    sessionId, 
-    filename,
-    analysisInProgress, 
-    analysisComplete, 
-    results, 
-    error, 
-    logs 
-  } = state;
+  const { sessionId, threadCount, threadsAnalyzed } = state;
   
-  const [analysisStarted, setAnalysisStarted] = useState(false);
-  const [intervalId, setIntervalId] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [analysisData, setAnalysisData] = useState(null);
+  const [error, setError] = useState(null);
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
   
-  // Calculate progress percentage
-  const progressPercentage = state.threadsToAnalyze > 0 
-    ? Math.round((state.threadsAnalyzed / state.threadsToAnalyze) * 100) 
-    : 0;
+  // Modal state for evidence
+  const [showEvidenceModal, setShowEvidenceModal] = useState(false);
+  const [evidenceModalTitle, setEvidenceModalTitle] = useState("");
+  const [evidenceModalData, setEvidenceModalData] = useState([]);
   
-  // Poll for analysis progress
-  const pollForProgress = () => {
-    if (!sessionId) return;
-    
-    console.log("Starting progress polling with sessionId:", sessionId, "filename:", filename);
-    const intervalId = setInterval(async () => {
-      try {
-        // Try the new endpoint first
-        let progressResponse;
-        try {
-          progressResponse = await api.getAnalysisProgress(sessionId, filename);
-          console.log("Progress response from new endpoint:", progressResponse.data);
-        } catch (error) {
-          // Fall back to the old endpoint
-          console.log("Falling back to old progress endpoint");
-          progressResponse = await api.checkProgress(sessionId);
-          console.log("Progress response from old endpoint:", progressResponse.data);
-        }
-        
-        // Extract the relevant data, handling both new and old API responses
-        let threadsAnalyzed = 0;
-        let threadsTotal = 0;
-        let isComplete = false;
-        let hasResults = false;
-        let logEntries = [];
-        
-        if (progressResponse.data.success) {
-          // New API format
-          threadsAnalyzed = progressResponse.data.threads_analyzed || 0;
-          threadsTotal = progressResponse.data.threads_total || 0;
-          isComplete = progressResponse.data.status === 'complete' || progressResponse.data.status === 'completed';
-          hasResults = progressResponse.data.has_results || false;
-          logEntries = progressResponse.data.log_entries || [];
-        } else {
-          // Old API format
-          threadsAnalyzed = progressResponse.data.analyzed_threads || 0;
-          threadsTotal = progressResponse.data.total_threads || 0;
-          isComplete = !progressResponse.data.is_analyzing;
-          hasResults = progressResponse.data.has_results || false;
-        }
-        
-        // Update progress in the UI
-        actions.updateAnalysisProgress(threadsAnalyzed);
-        
-        // Add any new log entries
-        if (logEntries && Array.isArray(logEntries)) {
-          logEntries.forEach(entry => {
-            actions.addLog({
-              timestamp: new Date().toISOString(),
-              message: entry,
-              level: 'info'
-            });
-          });
-        }
-        
-        // Check if analysis is complete
-        if (isComplete && threadsAnalyzed > 0) {
-          console.log("Analysis marked as complete, has_results:", hasResults);
-          
-          // Add completion log
-          actions.addLog({
-            timestamp: new Date().toISOString(),
-            message: 'Analysis completed successfully. Loading results...',
-            level: 'success'
-          });
-          
-          // Clear the polling interval
-          clearInterval(intervalId);
-          
-          // Fetch the results
-          await fetchResults();
-          return true;
-        }
-        
-        return false;
-      } catch (error) {
-        console.error('Error checking progress:', error);
-        actions.addLog({
-          timestamp: new Date().toISOString(),
-          message: `Error checking progress: ${error.message}`,
-          level: 'error'
-        });
-        return false;
-      }
-    }, 2000);
-    
-    // Store interval ID for cleanup
-    return intervalId;
-  };
-
-  // Start thread analysis
-  const startAnalysis = async () => {
-    if (!sessionId) return;
-    
-    try {
-      setAnalysisStarted(true);
-      
-      actions.addLog({
-        timestamp: new Date().toISOString(),
-        message: 'Starting thread analysis...',
-        level: 'info'
-      });
-      
-      const response = await api.analyzeThreads(sessionId, state.threadCount);
-      
-      actions.startAnalysis(response.data.thread_count);
-      
-      // Start polling for progress
-      const intervalId = pollForProgress();
-      
-      // Clean up interval on component unmount
-      return () => clearInterval(intervalId);
-      
-    } catch (error) {
-      console.error('Error starting analysis:', error);
-      actions.setError(error.response?.data?.error || 'Failed to start analysis');
-      actions.addLog({
-        timestamp: new Date().toISOString(),
-        message: `Analysis error: ${error.message}`,
-        level: 'error'
-      });
-    }
-  };
+  // Analysis controls
+  const [analyzeCount, setAnalyzeCount] = useState(10);
+  const [analysisStats, setAnalysisStats] = useState({
+    total_threads: 0,
+    analyzed_threads: 0,
+    remaining_threads: 0
+  });
   
-  // Cancel ongoing analysis
-  const cancelAnalysis = async () => {
-    if (!sessionId) return;
-    
-    try {
-      const response = await api.cancelAnalysis(sessionId);
-      
-      if (response.data.success) {
-        actions.addLog({
-          timestamp: new Date().toISOString(),
-          message: 'Analysis cancelled',
-          level: 'warning'
-        });
-      }
-    } catch (error) {
-      console.error('Error cancelling analysis:', error);
-    }
-  };
-  
-  // Fetch analysis results
-  const fetchResults = async () => {
-    if (!sessionId) return;
-    
-    try {
-      console.log("Fetching analysis results with sessionId:", sessionId, "filename:", filename);
-      
-      // Try all possible endpoints until we get valid results
-      let response = null;
-      let validResults = false;
-      
-      // Try new endpoint first
-      try {
-        response = await api.getAnalysisResults(sessionId, filename);
-        console.log("Results from new endpoint:", response.data);
-        validResults = response.data.success && (response.data.results || response.data);
-      } catch (newEndpointError) {
-        console.log("New endpoint failed:", newEndpointError);
-        
-        // Fall back to the legacy endpoint
-        try {
-          console.log("Falling back to dashboard data endpoint");
-          response = await api.getDashboardData(sessionId);
-          console.log("Results from dashboard endpoint:", response.data);
-          validResults = !!response.data;
-        } catch (dashboardError) {
-          console.error("All endpoints failed:", dashboardError);
-          throw new Error("Failed to fetch results from any endpoint");
-        }
-      }
-      
-      // Process results if we have them
-      if (validResults) {
-        let resultsData = null;
-        
-        if (response.data.success && response.data.results) {
-          resultsData = response.data.results;
-        } else {
-          resultsData = response.data;
-        }
-        
-        console.log("Final results data:", resultsData);
-        
-        // Update state with results
-        actions.completeAnalysis(resultsData);
-        
-        // Log success
-        actions.addLog({
-          timestamp: new Date().toISOString(),
-          message: 'Analysis results loaded successfully',
-          level: 'success'
-        });
-        
-        return true;
-      }
-      
-      return false;
-    } catch (error) {
-      console.error('Error fetching results:', error);
-      actions.setError(error.message || 'Failed to fetch results');
-      actions.addLog({
-        timestamp: new Date().toISOString(),
-        message: `Error fetching results: ${error.message}`,
-        level: 'error'
-      });
-      return false;
-    }
-  };
-  
-  // Check for existing analysis results on mount
+  // Load analysis data on component mount and when sessionId changes
   useEffect(() => {
-    // If we already have results, just ensure the UI is properly updated
-    if (sessionId && analysisComplete && results) {
-      console.log("Found existing analysis results on mount, displaying them");
-      setAnalysisStarted(true);
-      
-      // Add log entry for clarity
-      if (logs.length === 0) {
-        actions.addLog({
-          timestamp: new Date().toISOString(),
-          message: 'Loaded existing analysis results',
-          level: 'info'
-        });
-      }
-    } 
-    // If we have a session but no results and analysis isn't in progress,
-    // check if there are results on the server
-    else if (sessionId && !analysisInProgress && !analysisComplete && !results) {
-      console.log("Checking for existing analysis results on server");
-      
-      const checkForExistingResults = async () => {
-        try {
-          actions.addLog({
-            timestamp: new Date().toISOString(),
-            message: 'Checking for existing analysis results...',
-            level: 'info'
-          });
-          
-          const resultsFound = await fetchResults();
-          
-          if (resultsFound) {
-            console.log("Found and loaded existing results from server");
-            setAnalysisStarted(true);
-          } else {
-            console.log("No existing results found on server");
-          }
-        } catch (error) {
-          console.error("Error checking for existing results:", error);
-        }
-      };
-      
-      checkForExistingResults();
-    }
-    // If analysis is already in progress, start polling
-    else if (sessionId && analysisInProgress && !analysisComplete) {
-      console.log("Analysis already in progress, starting polling");
-      setAnalysisStarted(true);
-      const id = pollForProgress();
-      setIntervalId(id);
-      
-      // Clean up interval when unmounting
-      return () => {
-        if (id) clearInterval(id);
-      };
+    if (sessionId) {
+      loadAnalysisData();
+      fetchAnalysisStatus();
     }
   }, [sessionId]);
   
-  // Clean up polling when component unmounts
+  // Update local stats when global state changes
   useEffect(() => {
-    return () => {
-      if (intervalId) {
-        console.log("Cleaning up polling interval");
-        clearInterval(intervalId);
+    setAnalysisStats(prev => ({
+      ...prev,
+      total_threads: threadCount || 0,
+      analyzed_threads: threadsAnalyzed || 0,
+      remaining_threads: (threadCount || 0) - (threadsAnalyzed || 0)
+    }));
+  }, [threadCount, threadsAnalyzed]);
+  
+  const fetchAnalysisStatus = async () => {
+    try {
+      const response = await api.getAnalysisStatus(sessionId);
+      console.log("Analysis status response:", response.data);
+      if (response.data) {
+        // Update local component state
+        setAnalysisStats({
+          total_threads: response.data.total || 0,
+          analyzed_threads: response.data.analyzed || 0,
+          remaining_threads: response.data.remaining || 0
+        });
+        
+        // Also update the global state
+        actions.setThreadCount(response.data.total || 0);
+        actions.updateAnalysisProgress(response.data.analyzed || 0);
       }
-    };
-  }, [intervalId]);
+    } catch (err) {
+      console.error("Error fetching analysis status:", err);
+      actions.addLog({
+        timestamp: new Date().toISOString(),
+        message: `Error fetching analysis status: ${err.message}`,
+        level: 'error'
+      });
+    }
+  };
+  
+  const loadAnalysisData = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      // Fetch analysis results with optional date filtering
+      const response = await api.getAnalysisResults(sessionId, null, startDate, endDate);
+      
+      if (response.data && response.data.success) {
+        setAnalysisData(response.data);
+        
+        // If we got results, update global state
+        if (response.data.results) {
+          actions.setResults(response.data.results);
+        }
+      } else if (response.data && response.data.error) {
+        setError(response.data.error);
+        setAnalysisData(null);
+      } else {
+        // If no analysis exists yet, just show empty data
+        setAnalysisData(null);
+      }
+    } catch (err) {
+      console.error("Error loading analysis data:", err);
+      setError("Failed to load analysis data. Please try again.");
+      setAnalysisData(null);
+      
+      actions.addLog({
+        timestamp: new Date().toISOString(),
+        message: `Error loading analysis: ${err.message}`,
+        level: 'error'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  const handleDateFilterChange = () => {
+    loadAnalysisData();
+  };
+  
+  const analyzeThreads = async () => {
+    try {
+      setLoading(true);
+      
+      // Log that we're starting analysis
+      actions.addLog({
+        timestamp: new Date().toISOString(),
+        message: `Starting analysis of ${analyzeCount} threads`,
+        level: 'info'
+      });
+      
+      // Update global state
+      actions.startAnalysis(analyzeCount);
+      
+      // Call the API to analyze threads
+      const response = await api.analyzeThreads(sessionId, analyzeCount);
+      console.log("Analyze threads response:", response.data);
+      
+      // Refresh analysis status
+      await fetchAnalysisStatus();
+      
+      // Refresh analysis data
+      await loadAnalysisData();
+      
+      // Show success message
+      actions.addLog({
+        timestamp: new Date().toISOString(),
+        message: `Successfully analyzed threads. ${response.data.analyzed_count || 0} threads processed.`,
+        level: 'success'
+      });
+    } catch (err) {
+      console.error("Error analyzing threads:", err);
+      actions.addLog({
+        timestamp: new Date().toISOString(),
+        message: `Error analyzing threads: ${err.message}`,
+        level: 'error'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // Handle insight click to show evidence
+  const handleInsightClick = async (insight, category) => {
+    console.log("Insight clicked:", insight, category);
+    
+    try {
+      let title = '';
+      let evidenceData = [];
+      
+      // Handle different insight formats
+      if (typeof insight === 'string') {
+        title = insight;
+      } else if (insight.title) {
+        title = insight.title;
+      } else if (insight.insight) {
+        title = insight.insight;
+      } else {
+        title = "Evidence";
+      }
+      
+      // Try to gather evidence based on different data formats
+      if (insight.evidence_threads && insight.evidence_threads.length > 0) {
+        // This is our app's standard format
+        const promises = insight.evidence_threads.map(async (threadId) => {
+          try {
+            const response = await api.getThread(sessionId, threadId);
+            if (response.data) {
+              return {
+                thread_id: threadId,
+                messages: response.data.messages || [],
+                metadata: {
+                  message_count: response.data.message_count || response.data.messages?.length || 0
+                }
+              };
+            }
+          } catch (err) {
+            console.error(`Error loading thread ${threadId}:`, err);
+            return null;
+          }
+        });
+        
+        const threadResults = await Promise.all(promises);
+        evidenceData = threadResults.filter(t => t !== null);
+      } 
+      // Claude API format often has supporting_evidence as strings
+      else if (insight.supporting_evidence && insight.supporting_evidence.length > 0) {
+        evidenceData = insight.supporting_evidence;
+      }
+      // For instance-based evidence (used in discussions)
+      else if (insight.instances && insight.instances.length > 0) {
+        evidenceData = insight.instances.map(i => i.context);
+      }
+      
+      // Show the modal with evidence
+      setEvidenceModalTitle(title);
+      setEvidenceModalData(evidenceData);
+      setShowEvidenceModal(true);
+      
+    } catch (err) {
+      console.error("Error preparing evidence:", err);
+      actions.addLog({
+        timestamp: new Date().toISOString(),
+        message: `Error loading evidence: ${err.message}`,
+        level: 'error'
+      });
+    }
+  };
+
+  // Render loading state
+  if (loading) {
+    return <LoadingIndicator message="Loading analysis data..." />;
+  }
+  
+  // Calculate remaining threads
+  const remainingThreads = analysisStats.total_threads - analysisStats.analyzed_threads;
   
   return (
-    <div className="analysis-page">
-      <h2 className="page-title">Chat Analysis</h2>
+    <div className="page-content">
+      <h1>Analysis</h1>
       
-      {error && (
-        <Alert variant="danger" className="mb-4">
-          <FaTimesCircle className="me-2" />
-          {error}
-        </Alert>
-      )}
-      
-      <Card className="mb-4">
-        <Card.Body>
-          {analysisComplete && results ? (
-            <Card.Title>Analysis Results</Card.Title>
-          ) : (
-            <Card.Title>Start Thread Analysis</Card.Title>
-          )}
-          <Card.Text>
-            {state.threadCount > 0 ? (
-              <>Found {state.threadCount} conversation threads. Ready to analyze.</>
-            ) : (
-              <>No threads found. Please upload a chat file first.</>
+      {!sessionId && analysisStats.total_threads === 0 ? (
+        <div className="alert alert-info">
+          Please upload a chat file first to see analysis.
+        </div>
+      ) : (
+        <>
+          {/* Thread Statistics Dashboard */}
+          <div className="analysis-stats-section">
+            <h3>Thread Statistics</h3>
+            <div className="thread-stats-container">
+              <div className="thread-stat-card">
+                <h4>Total Threads</h4>
+                <p className="thread-stat-value">{analysisStats.total_threads}</p>
+              </div>
+              <div className="thread-stat-card">
+                <h4>Analyzed</h4>
+                <p className="thread-stat-value">{analysisStats.analyzed_threads}</p>
+              </div>
+              <div className="thread-stat-card">
+                <h4>Remaining</h4>
+                <p className="thread-stat-value">{remainingThreads}</p>
+              </div>
+            </div>
+            
+            {remainingThreads > 0 && (
+              <div className="analyze-controls">
+                <div className="form-group">
+                  <label htmlFor="analyzeCount">Number of threads to analyze:</label>
+                  <input
+                    type="number"
+                    id="analyzeCount"
+                    className="form-control"
+                    value={analyzeCount}
+                    onChange={(e) => setAnalyzeCount(parseInt(e.target.value) || 1)}
+                    min="1"
+                    max={remainingThreads}
+                  />
+                </div>
+                <button className="btn btn-primary" onClick={analyzeThreads} disabled={loading}>
+                  Analyze Threads
+                </button>
+              </div>
             )}
-          </Card.Text>
-          {analysisComplete && results ? (
-            <div className="analysis-status mb-4">
-              <div className="status-badge complete">
-                <FaCheck className="me-2" />
-                Analysis Complete
+          </div>
+          
+          {/* Analysis Results Section */}
+          {analysisData ? (
+            <div className="analysis-results">
+              <h2>Analysis Results</h2>
+              
+              <div className="date-filter-section">
+                <h4>Filter by Date</h4>
+                <div className="date-filter-controls">
+                  <div className="form-group">
+                    <label htmlFor="startDate">Start Date:</label>
+                    <input
+                      type="date"
+                      id="startDate"
+                      className="form-control"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="endDate">End Date:</label>
+                    <input
+                      type="date"
+                      id="endDate"
+                      className="form-control"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                    />
+                  </div>
+                  <button 
+                    className="btn btn-outline-primary"
+                    onClick={handleDateFilterChange}
+                  >
+                    Apply Filter
+                  </button>
+                </div>
               </div>
-              <Button 
-                variant="outline-primary" 
-                size="sm"
-                onClick={startAnalysis}
-              >
-                <FaSync className="me-2" />
-                Re-run Analysis
-              </Button>
+              
+              {/* Analysis Data Visualization */}
+              <div className="analysis-visualization">
+                {analysisData.results ? (
+                  <AnalysisResults 
+                    results={analysisData.results} 
+                    onInsightClick={handleInsightClick}
+                  />
+                ) : (
+                  <div className="no-data-message">
+                    <p>Thread Analysis Complete.</p>
+                    <p>Results will be displayed as they become available.</p>
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
-            <Button 
-              variant="primary" 
-              onClick={startAnalysis}
-              disabled={!sessionId || state.threadCount === 0}
-            >
-              <FaSync className="me-2" />
-              Start Analysis
-            </Button>
-          )}
-          {analysisInProgress && (
-            <div className="mt-3 mb-3">
-              <ProgressBar 
-                now={progressPercentage} 
-                label={`${progressPercentage}%`}
-                variant="info" 
-                animated
-              />
-              <div className="text-center mt-2">
-                <small className="text-muted">
-                  Analyzed {state.threadsAnalyzed} of {state.threadsToAnalyze} threads
-                </small>
-              </div>
-              <Button 
-                variant="danger" 
-                onClick={cancelAnalysis}
-              >
-                Cancel Analysis
-              </Button>
+            <div className="no-data-message">
+              {error ? (
+                <div className="alert alert-danger">{error}</div>
+              ) : (
+                <p>No analysis data available yet. Use the controls above to analyze threads.</p>
+              )}
             </div>
           )}
-        </Card.Body>
-      </Card>
-      
-      {analysisComplete && results && (
-        <AnalysisResults results={results} />
+          
+          {/* Evidence Modal */}
+          <EvidenceModal 
+            show={showEvidenceModal}
+            onHide={() => setShowEvidenceModal(false)}
+            title={evidenceModalTitle}
+            evidence={evidenceModalData}
+          />
+        </>
       )}
-      
-      <Row className="mt-4">
-        <Col>
-          <div className="log-container">
-            <ProcessingLog logs={logs} />
-          </div>
-        </Col>
-      </Row>
     </div>
   );
 };

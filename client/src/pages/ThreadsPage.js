@@ -7,7 +7,7 @@ import { FaSearch, FaSync, FaChartBar } from 'react-icons/fa';
 
 const ThreadsPage = () => {
   const { state, actions } = useAnalyzer();
-  const { sessionId } = state;
+  const { sessionId, threadsAnalyzed } = state;
   
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -22,23 +22,25 @@ const ThreadsPage = () => {
   });
   const [threadCount, setThreadCount] = useState(0);
   const [threadsToAnalyze, setThreadsToAnalyze] = useState(10);
+  const [analysisStats, setAnalysisStats] = useState({
+    totalThreads: 0,
+    analyzedThreads: 0,
+    remainingThreads: 0
+  });
   
   // Load thread list when component mounts or session changes
   useEffect(() => {
-    if (sessionId) {
-      loadThreads(pagination.page);
-    }
-  }, [sessionId]);
+    loadThreads(pagination.page);
+    fetchAnalysisStats();
+  }, []);
   
   // Load threads with pagination
   const loadThreads = async (page = 1) => {
-    if (!sessionId) return;
-    
     try {
       setLoading(true);
       setError(null);
       
-      const response = await api.listThreads(sessionId, page, pagination.perPage);
+      const response = await api.listThreads(sessionId || '', page, pagination.perPage);
       
       if (response.data) {
         setThreads(response.data.threads || []);
@@ -49,6 +51,13 @@ const ThreadsPage = () => {
           totalPages: response.data.total_pages || 1
         });
         setThreadCount(response.data.total || 0);
+        
+        // Update analysis stats
+        setAnalysisStats(prev => ({
+          ...prev,
+          totalThreads: response.data.total || 0,
+          remainingThreads: (response.data.total || 0) - prev.analyzedThreads
+        }));
       }
     } catch (err) {
       console.error('Error loading threads:', err);
@@ -63,6 +72,29 @@ const ThreadsPage = () => {
     }
   };
   
+  // Fetch analysis stats
+  const fetchAnalysisStats = async () => {
+    try {
+      const response = await api.getAnalysisStatus(sessionId || '');
+      
+      if (response.data) {
+        const analyzed = response.data.analyzed_threads || 0;
+        setAnalysisStats({
+          totalThreads: threadCount,
+          analyzedThreads: analyzed,
+          remainingThreads: threadCount - analyzed
+        });
+        
+        // Update global state
+        if (analyzed > 0) {
+          actions.updateAnalysisProgress(analyzed);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching analysis stats:', err);
+    }
+  };
+  
   // Handle pagination
   const handlePageChange = (page) => {
     loadThreads(page);
@@ -70,13 +102,13 @@ const ThreadsPage = () => {
   
   // Load specific thread
   const loadThread = async (threadId) => {
-    if (!sessionId || !threadId) return;
+    if (!threadId) return;
     
     try {
       setLoading(true);
       
       const response = await api.getThread(sessionId, threadId);
-      console.log('Raw thread response:', response.data); // Debug log
+      console.log('Thread response for ID:', threadId, response.data);
       
       if (response.data) {
         let thread = {
@@ -89,10 +121,12 @@ const ThreadsPage = () => {
         if (Array.isArray(response.data.messages)) {
           thread.messages = response.data.messages;
           thread.message_count = response.data.messages.length;
+          console.log('Using direct messages array:', thread.messages.length);
         } 
         // Handle thread property
         else if (response.data.thread && response.data.thread.messages) {
           thread = response.data.thread;
+          console.log('Using thread.messages object:', thread.messages.length);
         } 
         // Handle content array
         else if (Array.isArray(response.data.content)) {
@@ -124,6 +158,7 @@ const ThreadsPage = () => {
           
           thread.messages = messages;
           thread.message_count = messages.length;
+          console.log('Using content array:', thread.messages.length);
         }
         // Fallback to content as a property
         else if (response.data.content && typeof response.data.content === 'string') {
@@ -145,6 +180,12 @@ const ThreadsPage = () => {
             thread.messages = [{ role: 'system', content: response.data.content }];
           }
           thread.message_count = thread.messages.length;
+          console.log('Using parsed content string:', thread.messages.length);
+        } else {
+          // Last resort - use the entire response data as a message
+          console.log('No recognized message format found, creating a fallback message');
+          thread.messages = [{ role: 'system', content: JSON.stringify(response.data) }];
+          thread.message_count = 1;
         }
         
         // Update metadata if available
@@ -152,7 +193,7 @@ const ThreadsPage = () => {
         if (response.data.title) thread.title = response.data.title;
         if (response.data.message_count) thread.message_count = response.data.message_count;
         
-        console.log('Processed thread:', thread);
+        console.log('Final thread object:', thread);
         setCurrentThread(thread);
       }
     } catch (err) {
@@ -207,10 +248,37 @@ const ThreadsPage = () => {
   const formatMessage = (message) => {
     // Determine role - default to 'system' if not specified
     let role = 'system';
+    let content = '';
     
     if (message && typeof message === 'object') {
+      // Handle object format with role property
       if (message.role) {
         role = message.role.toLowerCase();
+      }
+      
+      // Handle different content formats
+      if (message.content) {
+        // Ensure content is a string
+        content = typeof message.content === 'object' 
+          ? JSON.stringify(message.content) 
+          : String(message.content);
+      } else if (message.text) {
+        // Ensure text is a string
+        content = typeof message.text === 'object' 
+          ? JSON.stringify(message.text) 
+          : String(message.text);
+        
+        // If there's a type property, it might also indicate the role
+        if (message.type) {
+          if (message.type === 'human' || message.type === 'user') {
+            role = 'user';
+          } else if (message.type === 'ai' || message.type === 'assistant') {
+            role = 'assistant';
+          }
+        }
+      } else {
+        // Fallback to stringifying the object if no content or text field
+        content = JSON.stringify(message);
       }
       
       // Return formatted message bubble
@@ -219,7 +287,7 @@ const ThreadsPage = () => {
           <div className="message-header">
             <span className="message-role">{role}</span>
           </div>
-          <div className="message-content">{message.content || ''}</div>
+          <div className="message-content">{content}</div>
         </div>
       );
     } else if (typeof message === 'string') {
@@ -317,7 +385,7 @@ const ThreadsPage = () => {
         <Col>
           <h2 className="page-title">Conversation Threads</h2>
           <p className="page-description">
-            Browse through extracted conversation threads and analyze them with Claude.
+            Browse through imported conversation threads.
           </p>
         </Col>
       </Row>
@@ -330,42 +398,60 @@ const ThreadsPage = () => {
       
       <Row className="mb-4">
         <Col md={6}>
-          <Card className="analysis-control-card">
+          <Card className="thread-stats-card">
             <Card.Header>
-              <h5 className="mb-0">Thread Analysis</h5>
+              <h5 className="mb-0">Thread Statistics</h5>
             </Card.Header>
             <Card.Body>
-              <p>Total threads extracted: <strong>{threadCount}</strong></p>
-              <Form className="d-flex align-items-center">
-                <Form.Group className="me-3 flex-grow-1">
-                  <Form.Label>Number of threads to analyze:</Form.Label>
-                  <Form.Control 
-                    type="number" 
-                    min="1" 
-                    max={threadCount} 
-                    value={threadsToAnalyze}
-                    onChange={(e) => setThreadsToAnalyze(parseInt(e.target.value, 10) || 0)}
-                  />
-                </Form.Group>
-                <Button 
-                  variant="primary" 
-                  className="mt-auto"
-                  onClick={startAnalysis}
-                  disabled={analyzing || !sessionId || threadsToAnalyze <= 0 || threadsToAnalyze > threadCount}
-                >
-                  {analyzing ? (
-                    <>
-                      <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                      Analyzing...
-                    </>
-                  ) : (
-                    <>
-                      <FaChartBar className="me-2" />
-                      Analyze Threads
-                    </>
-                  )}
-                </Button>
-              </Form>
+              <div className="stats-grid">
+                <div className="stat-item">
+                  <div className="stat-label">Total Threads</div>
+                  <div className="stat-value">{analysisStats.totalThreads}</div>
+                </div>
+                <div className="stat-item">
+                  <div className="stat-label">Analyzed Threads</div>
+                  <div className="stat-value">{analysisStats.analyzedThreads}</div>
+                </div>
+                <div className="stat-item">
+                  <div className="stat-label">Remaining Threads</div>
+                  <div className="stat-value">{analysisStats.remainingThreads}</div>
+                </div>
+              </div>
+              
+              {analysisStats.remainingThreads > 0 && (
+                <div className="mt-3">
+                  <Form className="d-flex align-items-center">
+                    <Form.Group className="me-3 flex-grow-1">
+                      <Form.Label>Analyze additional threads:</Form.Label>
+                      <Form.Control 
+                        type="number" 
+                        min="1" 
+                        max={analysisStats.remainingThreads} 
+                        value={threadsToAnalyze}
+                        onChange={(e) => setThreadsToAnalyze(parseInt(e.target.value, 10) || 0)}
+                      />
+                    </Form.Group>
+                    <Button 
+                      variant="primary" 
+                      className="mt-auto"
+                      onClick={startAnalysis}
+                      disabled={analyzing || !sessionId || threadsToAnalyze <= 0 || threadsToAnalyze > analysisStats.remainingThreads}
+                    >
+                      {analyzing ? (
+                        <>
+                          <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                          Analyzing...
+                        </>
+                      ) : (
+                        <>
+                          <FaChartBar className="me-2" />
+                          Analyze
+                        </>
+                      )}
+                    </Button>
+                  </Form>
+                </div>
+              )}
             </Card.Body>
           </Card>
         </Col>
@@ -467,10 +553,8 @@ const ThreadsPage = () => {
                 </div>
               ) : (
                 <div className="thread-messages">
-                  {currentThread && console.log('Current thread in render:', currentThread)}
                   {currentThread.messages && currentThread.messages.length > 0 ? (
                     currentThread.messages.map((message, index) => {
-                      console.log('Rendering message:', index, message);
                       return (
                         <div key={index} className={`thread-message-container ${message.role === 'user' ? 'user-container' : message.role === 'assistant' ? 'assistant-container' : 'system-container'}`}>
                           {formatMessage(message)}

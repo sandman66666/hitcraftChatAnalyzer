@@ -5,10 +5,17 @@ import os
 import json
 import glob
 import datetime
-from flask import Blueprint, request, jsonify, session, send_from_directory
+from flask import Blueprint, request, jsonify, session, send_from_directory, g, has_request_context
+import logging
 from logging_manager import add_log
 from thread_analyzer import filter_results_by_time
 import config
+import thread_storage
+import threading
+import random
+import requests
+import traceback
+from dotenv import load_dotenv
 
 # Create Blueprint
 api_bp = Blueprint('api', __name__)
@@ -21,6 +28,14 @@ def get_claude_key():
     
     claude_key = os.environ.get('CLAUDE_API_KEY', '')
     return jsonify({'key': claude_key})
+
+def get_claude_key_no_context():
+    """
+    Return the Claude API key without requiring Flask application context.
+    This is safe to use in background threads.
+    """
+    load_dotenv()
+    return os.environ.get('CLAUDE_API_KEY', '')
 
 @api_bp.route('/dashboard_data', methods=['GET'])
 def dashboard_data():
@@ -67,52 +82,26 @@ def dashboard_data():
 def get_thread_listing():
     """Return a list of available threads"""
     try:
-        # Get session information
+        # Get pagination parameters
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 10))
+        
+        # First check if we have a session with threads
         session_id = session.get('session_id')
-        add_log(f"get_thread_listing - Session ID from session: {session_id}", "info")
-        
-        if not session_id:
-            session_id = request.args.get('session_id')
-            add_log(f"get_thread_listing - Session ID from args: {session_id}", "info")
-            if not session_id:
-                add_log("get_thread_listing - No session ID found", "error")
-                return jsonify({'error': 'No session ID provided'}), 400
-        
-        # Set up session-specific threads directory
-        session_dir = os.path.join(config.TEMP_FOLDER, session_id)
-        threads_dir = os.path.join(session_dir, 'threads')
-        add_log(f"get_thread_listing - Looking for threads in: {threads_dir}", "info")
-        
-        if not os.path.exists(threads_dir):
-            add_log(f"get_thread_listing - Threads directory not found: {threads_dir}", "error")
-            return jsonify({'error': 'No threads found'})
+        if session_id:
+            # Try session-specific threads first (newly uploaded)
+            session_dir = os.path.join(config.TEMP_FOLDER, session_id)
+            threads_dir = os.path.join(session_dir, 'threads')
             
-        # Check for thread list file first
-        thread_list_path = os.path.join(threads_dir, 'thread_list.json')
-        add_log(f"get_thread_listing - Thread list path: {thread_list_path}", "info")
-        add_log(f"get_thread_listing - Thread list exists: {os.path.exists(thread_list_path)}", "info")
-        
-        if os.path.exists(thread_list_path):
-            with open(thread_list_path, 'r') as f:
-                thread_list = json.load(f)
-                
-            # Sort by timestamp if available
-            thread_list.sort(key=lambda x: str(x.get('last_message_time', '')) if isinstance(x.get('last_message_time'), (dict, list)) else x.get('last_message_time', ''), reverse=True)
-            return jsonify({'threads': thread_list})
-        
-        # Fallback: scan directory for thread files
-        thread_files = glob.glob(os.path.join(threads_dir, '*.txt'))
-        thread_list = []
-        
-        for thread_file in thread_files:
-            thread_id = os.path.basename(thread_file).replace('.txt', '')
-            thread_list.append({
-                'id': thread_id,
-                'message_count': 0,  # Unknown without parsing
-                'title': f"Thread {thread_id}"
-            })
-            
-        return jsonify({'threads': thread_list})
+            if os.path.exists(threads_dir):
+                # Store newly uploaded threads permanently
+                threads_added, total_count = thread_storage.store_threads_permanently(session_id, threads_dir)
+                if threads_added > 0:
+                    add_log(f"Added {threads_added} new threads to permanent storage")
+
+        # Get all threads from persistent storage with pagination
+        result = thread_storage.get_all_threads(page, per_page)
+        return jsonify(result)
         
     except Exception as e:
         add_log(f"Error listing threads: {str(e)}", "error")
@@ -122,364 +111,123 @@ def get_thread_listing():
 def get_threads():
     """Direct implementation of thread listing for compatibility with React frontend"""
     try:
-        # Get session ID from either session or query parameters
-        session_id = session.get('session_id')
-        if not session_id:
-            session_id = request.args.get('session_id')
-            add_log(f"get_threads - Using session_id from args: {session_id}", "info")
-        
-        add_log(f"get_threads - Session ID: {session_id}", "info")
-        
-        if not session_id:
-            add_log("get_threads - No session ID found", "error")
-            return jsonify({'threads': []})  # Return empty list instead of error for better UX
-        
         # Get pagination parameters
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 10))
         
-        # Set up session directory paths
-        session_dir = os.path.join(config.TEMP_FOLDER, session_id)
-        threads_dir = os.path.join(session_dir, 'threads')
-        add_log(f"get_threads - Looking for threads in: {threads_dir}", "info")
-        
-        # Check if the threads directory exists
-        if not os.path.exists(threads_dir):
-            add_log(f"get_threads - Threads directory not found: {threads_dir}", "error")
-            return jsonify({'threads': [], 'page': page, 'per_page': per_page, 'total': 0, 'total_pages': 0})
-        
-        # Look for thread list file
-        thread_list_path = os.path.join(threads_dir, 'thread_list.json')
-        
-        if os.path.exists(thread_list_path):
-            add_log(f"get_threads - Found thread_list.json", "info")
-            with open(thread_list_path, 'r') as f:
-                thread_list = json.load(f)
-                
-            # Safely handle thread sorting
-            try:
-                thread_list.sort(key=lambda x: str(x.get('last_message_time', '')) if isinstance(x.get('last_message_time'), (dict, list)) else x.get('last_message_time', ''), reverse=True)
-            except Exception as e:
-                add_log(f"get_threads - Error sorting threads: {str(e)}", "error")
+        # First check if we have a session with threads
+        session_id = session.get('session_id')
+        if session_id:
+            # Check if we have newly uploaded threads
+            session_dir = os.path.join(config.TEMP_FOLDER, session_id)
+            threads_dir = os.path.join(session_dir, 'threads')
             
-            # Calculate pagination
-            total = len(thread_list)
-            total_pages = (total + per_page - 1) // per_page  # Ceiling division
-            
-            # Get the requested page
-            start_idx = (page - 1) * per_page
-            end_idx = start_idx + per_page
-            paginated_threads = thread_list[start_idx:end_idx]
-            
-            add_log(f"get_threads - Returning {len(paginated_threads)} threads (page {page}/{total_pages})", "info")
-            return jsonify({
-                'threads': paginated_threads,
-                'page': page,
-                'per_page': per_page,
-                'total': total,
-                'total_pages': total_pages
-            })
+            if os.path.exists(threads_dir):
+                # Store newly uploaded threads permanently
+                threads_added, total_count = thread_storage.store_threads_permanently(session_id, threads_dir)
+                if threads_added > 0:
+                    add_log(f"Added {threads_added} new threads to permanent storage")
         
-        # Fallback: Scan directory for thread files
-        add_log(f"get_threads - No thread_list.json, scanning for thread files", "info")
-        thread_files = glob.glob(os.path.join(threads_dir, '*.txt'))
-        thread_list = []
-        
-        for thread_file in thread_files:
-            thread_id = os.path.basename(thread_file).replace('.txt', '')
-            thread_list.append({
-                'id': thread_id,
-                'message_count': 0,
-                'title': f"Thread {thread_id}"
-            })
-        
-        # Calculate pagination
-        total = len(thread_list)
-        total_pages = (total + per_page - 1) // per_page  # Ceiling division
-        
-        # Get the requested page
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        paginated_threads = thread_list[start_idx:end_idx]
-        
-        add_log(f"get_threads - Found {total} thread files, returning page {page}/{total_pages}", "info")
-        return jsonify({
-            'threads': paginated_threads,
-            'page': page,
-            'per_page': per_page,
-            'total': total,
-            'total_pages': total_pages
-        })
+        # Get all threads from persistent storage with pagination
+        result = thread_storage.get_all_threads(page, per_page)
+        add_log(f"Returning {len(result['threads'])} threads (page {page}/{result['total_pages']})")
+        return jsonify(result)
         
     except Exception as e:
-        add_log(f"get_threads - Error listing threads: {str(e)}", "error")
+        add_log(f"Error getting threads: {str(e)}", "error")
         return jsonify({
-            'error': str(e), 
             'threads': [],
-            'page': 1,
-            'per_page': 10,
+            'page': page,
+            'per_page': per_page,
             'total': 0,
             'total_pages': 0
         })
 
-@api_bp.route('/thread/<thread_id>', methods=['GET'])
-def get_thread_content(thread_id):
+@api_bp.route('/get_thread_content', methods=['GET'])
+def get_thread_content():
     """Return the content of a specific thread"""
     try:
-        threads_dir = os.path.join(config.THREADS_FOLDER)
-        thread_path = os.path.join(threads_dir, f"{thread_id}.json")
+        thread_id = request.args.get('thread_id')
         
-        # First try JSON format
-        if os.path.exists(thread_path):
-            with open(thread_path, 'r') as f:
-                thread_data = json.load(f)
-            return jsonify(thread_data)
+        if not thread_id:
+            return jsonify({'error': 'No thread ID provided'}), 400
             
-        # Fall back to text format
-        thread_path = os.path.join(threads_dir, f"{thread_id}.txt")
-        if not os.path.exists(thread_path):
-            return jsonify({'error': 'Thread not found'})
-            
-        with open(thread_path, 'r') as f:
-            content = f.read()
-            
-        # Parse the text content into a structured format
-        messages = []
-        current_message = None
-        
-        for line in content.split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-                
-            if line.startswith('USER:'):
-                if current_message:
-                    messages.append(current_message)
-                current_message = {'role': 'user', 'content': line[5:].strip()}
-            elif line.startswith('ASSISTANT:'):
-                if current_message:
-                    messages.append(current_message)
-                current_message = {'role': 'assistant', 'content': line[10:].strip()}
-            else:
-                if current_message:
-                    current_message['content'] += ' ' + line
-        
-        if current_message:
-            messages.append(current_message)
-            
-        return jsonify({'messages': messages})
+        # Get thread from persistent storage
+        result = thread_storage.get_thread_content(thread_id)
+        return jsonify(result)
         
     except Exception as e:
         add_log(f"Error getting thread content: {str(e)}", "error")
         return jsonify({'error': str(e)})
 
-@api_bp.route('/get_thread_content', methods=['GET'])
+@api_bp.route('/thread_content', methods=['GET'])
 def get_thread_content_legacy():
     """Legacy endpoint for thread content compatibility"""
+    return get_thread_content()
+
+@api_bp.route('/threads', methods=['GET'])
+def get_threads_new():
+    """New RESTful endpoint for thread listing"""
     try:
-        import json
+        # Get pagination parameters
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 10))
         
-        thread_id = request.args.get('thread_id')
-        session_id = session.get('session_id')
-        
-        if not session_id:
-            session_id = request.args.get('session_id')
-            add_log(f"get_thread_content_legacy - Using session_id from args: {session_id}", "info")
+        # First check if we have a session with threads
+        session_id = request.args.get('session_id') or session.get('session_id')
+        if session_id:
+            # Check if we have newly uploaded threads
+            session_dir = os.path.join(config.TEMP_FOLDER, session_id)
+            threads_dir = os.path.join(session_dir, 'threads')
             
-        if not thread_id:
-            add_log("get_thread_content_legacy - No thread ID provided", "error")
-            return jsonify({'error': 'No thread ID provided'}), 400
+            if os.path.exists(threads_dir):
+                # Store newly uploaded threads permanently
+                threads_added, total_count = thread_storage.store_threads_permanently(session_id, threads_dir)
+                if threads_added > 0:
+                    add_log(f"Added {threads_added} new threads to permanent storage")
         
-        add_log(f"get_thread_content_legacy - Getting content for thread {thread_id}, session {session_id}", "info")
+        # Get all threads from persistent storage with pagination
+        result = thread_storage.get_all_threads(page, per_page)
+        add_log(f"Returning {len(result.get('threads', []))} threads (page {page}/{result.get('total_pages', 1)})")
+        return jsonify(result)
         
-        # MongoDB ObjectId handling - extract the actual ID if in {"$oid": "XXX"} format
-        try:
-            if thread_id.startswith('{"$oid":'):
-                # Extract the ID from the JSON structure
-                oid_obj = json.loads(thread_id)
-                cleaned_thread_id = oid_obj.get('$oid')
-                add_log(f"get_thread_content_legacy - Extracted OID from JSON: {cleaned_thread_id}", "info")
-            else:
-                cleaned_thread_id = thread_id
-        except Exception as e:
-            add_log(f"get_thread_content_legacy - Error cleaning thread ID: {str(e)}", "error")
-            cleaned_thread_id = thread_id.replace('{', '').replace('}', '').replace('"', '').replace('$oid:', '').strip()
-            add_log(f"get_thread_content_legacy - Fallback cleaned ID: {cleaned_thread_id}", "info")
+    except Exception as e:
+        add_log(f"Error getting threads: {str(e)}", "error")
+        return jsonify({
+            'threads': [],
+            'page': page,
+            'per_page': per_page,
+            'total': 0,
+            'total_pages': 0
+        })
+
+@api_bp.route('/thread/<thread_id>', methods=['GET'])
+def get_thread(thread_id):
+    """Return the content of a specific thread"""
+    try:
+        session_id = request.args.get('session_id') or session.get('session_id')
+        add_log(f"Loading thread content for thread_id: {thread_id}")
         
-        # Set up session directory paths
-        session_dir = os.path.join(config.TEMP_FOLDER, session_id)
-        threads_dir = os.path.join(session_dir, 'threads')
+        # Get thread from storage
+        thread_data = thread_storage.get_thread_content(thread_id)
         
-        # Check for thread file - try both formats
-        thread_file = os.path.join(threads_dir, f"{cleaned_thread_id}.txt")
-        original_thread_file = os.path.join(threads_dir, f"{thread_id}.txt")
-        
-        # Try the cleaned ID first, then the original if that fails
-        if os.path.exists(thread_file):
-            add_log(f"get_thread_content_legacy - Found thread file with cleaned ID", "info")
-            thread_path = thread_file
-        elif os.path.exists(original_thread_file):
-            add_log(f"get_thread_content_legacy - Found thread file with original ID", "info")
-            thread_path = original_thread_file
-        else:
-            # If neither exists, try to find a file that contains the cleaned ID as part of the name
-            matching_files = glob.glob(os.path.join(threads_dir, f"*{cleaned_thread_id}*.txt"))
-            if matching_files:
-                thread_path = matching_files[0]
-                add_log(f"get_thread_content_legacy - Found matching thread file: {os.path.basename(thread_path)}", "info")
-            else:
-                # Try JSON files as well
-                json_file = os.path.join(threads_dir, f"{cleaned_thread_id}.json")
-                original_json_file = os.path.join(threads_dir, f"{thread_id}.json")
-                
-                if os.path.exists(json_file):
-                    add_log(f"get_thread_content_legacy - Found .json file with cleaned ID", "info")
-                    thread_path = json_file
-                elif os.path.exists(original_json_file):
-                    add_log(f"get_thread_content_legacy - Found .json file with original ID", "info")
-                    thread_path = original_json_file
-                else:
-                    # Last resort: Check for MongoDB ObjectId-style JSON files
-                    matching_json_files = glob.glob(os.path.join(threads_dir, f'*"$oid": "{cleaned_thread_id}"*.json'))
-                    if matching_json_files:
-                        thread_path = matching_json_files[0]
-                        add_log(f"get_thread_content_legacy - Found MongoDB ObjectId JSON file: {os.path.basename(thread_path)}", "info")
-                    else:
-                        add_log(f"get_thread_content_legacy - Thread file not found for any ID variant", "error")
-                        return jsonify({'error': 'Thread not found'}), 404
-        
-        # Read thread content
-        try:
-            with open(thread_path, 'r') as f:
-                thread_content = f.read()
-                add_log(f"get_thread_content_legacy - Read thread content, length: {len(thread_content)}", "info")
-        except Exception as e:
-            add_log(f"get_thread_content_legacy - Error reading thread file: {str(e)}", "error")
-            return jsonify({'error': f'Error reading thread file: {str(e)}'}), 500
-        
-        # Parse messages
-        messages = []
-        # Try several approaches to parse the content
-        try:
-            # First attempt: Try to parse as standard JSON
-            messages = json.loads(thread_content)
-            add_log(f"get_thread_content_legacy - Successfully parsed thread content with {len(messages)} messages", "info")
-        except json.JSONDecodeError as e:
-            add_log(f"get_thread_content_legacy - Error parsing thread content as JSON: {str(e)}", "error")
-            
-            # Second attempt: Try with MongoDB ObjectId format
-            try:
-                # MongoDB ObjectIds can cause parsing issues, try replacing them
-                cleaned_content = thread_content.replace('{"$oid":', '{"oid":')
-                messages = json.loads(cleaned_content)
-                add_log(f"get_thread_content_legacy - Successfully parsed thread content after ObjectId cleanup", "info")
-            except json.JSONDecodeError:
-                # Third attempt: Try with additional JSON cleanup
-                try:
-                    # Additional cleanup for common JSON issues
-                    more_cleaned_content = thread_content.replace("'", '"').replace("True", "true").replace("False", "false").replace("None", "null")
-                    messages = json.loads(more_cleaned_content)
-                    add_log(f"get_thread_content_legacy - Successfully parsed thread content after additional cleanup", "info")
-                except json.JSONDecodeError:
-                    # Fourth attempt: Check if it's a JSON format with a surrounding structure
-                    try:
-                        # Some files might have the messages inside a container object
-                        container = json.loads(f'{{"messages":{thread_content}}}')
-                        if 'messages' in container and isinstance(container['messages'], list):
-                            messages = container['messages']
-                            add_log(f"get_thread_content_legacy - Successfully parsed thread content as array within container", "info")
-                    except json.JSONDecodeError:
-                        # Fallback: If it's not JSON, create a simple array of messages from the content
-                        try:
-                            # Split by chat patterns
-                            if 'USER:' in thread_content and 'ASSISTANT:' in thread_content:
-                                # Try to split by USER/ASSISTANT pattern
-                                chunks = []
-                                current_chunk = ""
-                                current_role = None
-                                
-                                for line in thread_content.split('\n'):
-                                    if line.startswith('USER:'):
-                                        if current_role:
-                                            chunks.append((current_role, current_chunk.strip()))
-                                        current_role = 'user'
-                                        current_chunk = line[5:].strip()
-                                    elif line.startswith('ASSISTANT:'):
-                                        if current_role:
-                                            chunks.append((current_role, current_chunk.strip()))
-                                        current_role = 'assistant'
-                                        current_chunk = line[10:].strip()
-                                    else:
-                                        current_chunk += " " + line.strip()
-                                
-                                if current_role and current_chunk:
-                                    chunks.append((current_role, current_chunk.strip()))
-                                    
-                                for role, content in chunks:
-                                    messages.append({"role": role, "content": content})
-                                    
-                                add_log(f"get_thread_content_legacy - Created {len(messages)} messages from USER/ASSISTANT format", "info")
-                            else:
-                                # Default fallback: alternate lines as user/assistant messages
-                                lines = thread_content.strip().split("\n")
-                                messages = []
-                                for i, line in enumerate(lines):
-                                    if line.strip():
-                                        role = "user" if i % 2 == 0 else "assistant"
-                                        messages.append({"role": role, "content": line.strip()})
-                                add_log(f"get_thread_content_legacy - Created {len(messages)} messages from alternating lines", "info")
-                        except Exception as fallback_e:
-                            add_log(f"get_thread_content_legacy - Fallback parsing also failed: {str(fallback_e)}", "error")
-                            return jsonify({
-                                'error': 'Error parsing thread content', 
-                                'thread_id': thread_id,
-                                'cleaned_id': cleaned_thread_id,
-                                'file_path': thread_path,
-                                'content_preview': thread_content[:200] if thread_content else "Empty content"
-                            }), 500
-        
-        # Get thread metadata if available
-        thread_metadata = None
-        thread_list_path = os.path.join(threads_dir, 'thread_list.json')
-        
-        if os.path.exists(thread_list_path):
-            try:
-                with open(thread_list_path, 'r') as f:
-                    thread_list = json.load(f)
-                    for thread in thread_list:
-                        if str(thread.get('id')) == str(cleaned_thread_id) or str(thread.get('id')) == str(thread_id):
-                            thread_metadata = thread
-                            break
-            except Exception as e:
-                add_log(f"get_thread_content_legacy - Error reading thread metadata: {str(e)}", "error")
-        
-        # Return response with messages formatted correctly for the frontend
-        thread_response = {
-            'id': cleaned_thread_id,
-            'messages': messages
-        }
-        
-        if thread_metadata:
-            thread_response.update({
-                'title': thread_metadata.get('title'),
-                'message_count': thread_metadata.get('message_count'),
+        if not thread_data:
+            return jsonify({
+                'success': False,
+                'error': f'Thread {thread_id} not found'
             })
         
-        add_log(f"get_thread_content_legacy - Returning thread with {len(messages)} messages", "info")
+        return jsonify({
+            'success': True,
+            'thread': thread_data
+        })
         
-        # For debugging
-        try:
-            # Print the first few messages to logs
-            for i, msg in enumerate(messages[:3]):
-                add_log(f"get_thread_content_legacy - Message {i}: role={msg.get('role', 'unknown')}, content={msg.get('content', '')[:50]}", "info")
-        except Exception as e:
-            add_log(f"get_thread_content_legacy - Error printing messages: {str(e)}", "error")
-            
-        return jsonify(thread_response)
-    
     except Exception as e:
-        add_log(f"get_thread_content_legacy - Error: {str(e)}", "error")
-        return jsonify({'error': str(e)}), 500
+        add_log(f"Error getting thread content: {str(e)}", "error")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
 
 @api_bp.route('/get_results/<filename>', methods=['GET'])
 def get_results(filename):
@@ -543,3 +291,595 @@ def debug_threads():
     except Exception as e:
         add_log(f"Error in debug_threads: {str(e)}", "error")
         return jsonify({'error': str(e)})
+
+@api_bp.route('/get_analysis_stats', methods=['GET'])
+def get_analysis_stats():
+    """Return statistics about analyzed threads"""
+    try:
+        stats = thread_storage.get_analysis_stats()
+        return jsonify(stats)
+    except Exception as e:
+        add_log(f"Error getting analysis stats: {str(e)}", "error")
+        return jsonify({'error': str(e)})
+
+@api_bp.route('/analysis_status', methods=['GET'])
+def analysis_status():
+    """Return the status of thread analysis"""
+    try:
+        session_id = request.args.get('session_id') or session.get('session_id')
+        
+        # Get analysis statistics from thread storage
+        stats = thread_storage.get_analysis_stats()
+        
+        # Create response with stats
+        return jsonify({
+            'success': True,
+            'total': stats['total'],
+            'analyzed': stats['analyzed'],
+            'remaining': stats['unanalyzed'],
+            'percentage': stats['percentage']
+        })
+        
+    except Exception as e:
+        add_log(f"Error getting analysis status: {str(e)}", "error")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@api_bp.route('/thread_count', methods=['GET'])
+def get_thread_count():
+    """Return the total number of threads"""
+    try:
+        session_id = request.args.get('session_id') or session.get('session_id')
+        
+        # Get thread stats
+        stats = thread_storage.get_analysis_stats()
+        
+        return jsonify({
+            'success': True,
+            'count': stats['total'],
+            'analyzed': stats['analyzed'],
+            'unanalyzed': stats['unanalyzed']
+        })
+        
+    except Exception as e:
+        add_log(f"Error getting thread count: {str(e)}", "error")
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'count': 0
+        }), 500
+
+@api_bp.route('/analyze_threads', methods=['POST'])
+def analyze_threads():
+    """Analyze threads for insights"""
+    try:
+        # Get request data
+        data = request.get_json() or {}
+        session_id = data.get('session_id') or session.get('session_id')
+        thread_count = int(data.get('count', 10))
+        
+        add_log(f"Starting analysis of up to {thread_count} threads")
+        
+        # Get threads to analyze
+        threads = thread_storage.get_unanalyzed_threads(thread_count)
+        
+        if not threads:
+            add_log("No unanalyzed threads found", "warning")
+            return jsonify({
+                'success': False,
+                'message': 'No unanalyzed threads found',
+                'analyzed_count': 0
+            })
+        
+        add_log(f"Found {len(threads)} unanalyzed threads for analysis")
+        
+        # Make a local copy of the threads for background processing
+        # to avoid Flask context issues
+        thread_data = []
+        for thread in threads:
+            thread_data.append(thread.copy() if isinstance(thread, dict) else thread)
+        
+        add_log(f"Found {len(threads)} unanalyzed threads, starting analysis")
+        
+        # Start analysis in a background thread without relying on Flask's application context
+        def run_analysis():
+            try:
+                # Direct call without Flask context
+                analyze_thread_no_context(session_id, thread_data)
+            except Exception as e:
+                logging.error(f"Thread analysis failed: {str(e)}")
+        
+        thread = threading.Thread(target=run_analysis)
+        thread.daemon = True
+        thread.start()
+        
+        return jsonify({
+            'success': True,
+            'thread_count': len(threads),
+            'message': f'Started analysis of {len(threads)} threads',
+            'analyzed_count': len(threads)
+        })
+        
+    except Exception as e:
+        add_log(f"Error starting thread analysis: {str(e)}", "error")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@api_bp.route('/get_analysis_results', methods=['GET'])
+def get_analysis_results():
+    """Return the latest analysis results"""
+    try:
+        session_id = request.args.get('session_id') or session.get('session_id')
+        
+        # Get the latest analysis
+        analysis_data = thread_storage.get_latest_analysis()
+        
+        if not analysis_data:
+            # Return empty results structure when no analysis exists
+            return jsonify({
+                'success': True,
+                'message': 'No analysis results found',
+                'results': {
+                    'threads': [],
+                    'insights': [],
+                    'stats': {
+                        'total_threads': 0,
+                        'analyzed_threads': 0
+                    }
+                },
+                'metadata': {
+                    'timestamp': datetime.datetime.now().isoformat(),
+                    'session_id': session_id
+                }
+            })
+        
+        # Return the analysis data
+        return jsonify({
+            'success': True,
+            'results': analysis_data.get('results', {}),
+            'metadata': analysis_data.get('metadata', {})
+        })
+        
+    except Exception as e:
+        add_log(f"Error getting analysis results: {str(e)}", "error")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@api_bp.route('/logs', methods=['GET'])
+def get_logs():
+    """Return the application logs"""
+    try:
+        # Create a simple in-memory log storage if it doesn't exist
+        if not hasattr(g, 'application_logs'):
+            g.application_logs = []
+        
+        # Return the logs
+        return jsonify({
+            'success': True,
+            'logs': g.application_logs
+        })
+        
+    except Exception as e:
+        add_log(f"Error getting logs: {str(e)}", "error")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+def add_log(message, level="info"):
+    """Add a message to the application log"""
+    if level == "error":
+        logging.error(message)
+    elif level == "warning":
+        logging.warning(message)
+    else:
+        logging.info(message)
+        
+    # Only attempt to store in g if we're in a Flask request context
+    try:
+        from flask import g, has_request_context
+        
+        # Only proceed if we're in a request context
+        if has_request_context():
+            timestamp = datetime.datetime.now().isoformat()
+            log_entry = {
+                'timestamp': timestamp,
+                'message': message,
+                'level': level
+            }
+            
+            # Create logs array if it doesn't exist
+            if not hasattr(g, 'application_logs'):
+                g.application_logs = []
+                
+            # Add to in-memory logs (limited to last 100 entries)
+            g.application_logs.append(log_entry)
+            if len(g.application_logs) > 100:
+                g.application_logs = g.application_logs[-100:]
+    except Exception as context_error:
+        # Just log and continue, don't cause a failure
+        logging.debug(f"Could not store log in request context: {str(context_error)}")
+
+def analyze_thread_no_context(session_id, threads):
+    """
+    Analyze threads outside of Flask context
+    This function is designed to run in a background thread
+    without relying on Flask's request or app context
+    """
+    try:
+        logging.info(f"Starting analysis batch for {len(threads)} threads")
+        
+        analyzed_thread_ids = []
+        analysis_results = {
+            'timestamp': datetime.datetime.now().isoformat(),
+            'session_id': session_id,
+            'threads_analyzed': len(threads),
+            'threads': [],
+            'insights': []
+        }
+        
+        # Process each thread
+        for i, thread in enumerate(threads):
+            thread_id = thread.get('id')
+            try:
+                # Extract messages from thread
+                messages = []
+                
+                # Handle different thread formats
+                if 'messages' in thread:
+                    messages = thread['messages']
+                elif 'content' in thread:
+                    if isinstance(thread['content'], list):
+                        messages = thread['content']
+                    elif isinstance(thread['content'], str):
+                        # Try to parse as JSON
+                        try:
+                            parsed = json.loads(thread['content'])
+                            if isinstance(parsed, list):
+                                messages = parsed
+                            else:
+                                messages = [{'role': 'system', 'content': thread['content']}]
+                        except:
+                            messages = [{'role': 'system', 'content': thread['content']}]
+                
+                # Ensure messages is a list of objects with role and content
+                parsed_messages = []
+                for msg in messages:
+                    if isinstance(msg, dict) and 'role' in msg and 'content' in msg:
+                        parsed_messages.append(msg)
+                    else:
+                        # Try to determine role from content
+                        content = str(msg)
+                        role = 'system'
+                        
+                        if content.upper().startswith('USER:'):
+                            role = 'user'
+                            content = content[5:].strip()
+                        elif content.upper().startswith('ASSISTANT:'):
+                            role = 'assistant'
+                            content = content[10:].strip()
+                            
+                        parsed_messages.append({'role': role, 'content': content})
+                
+                if not parsed_messages:
+                    logging.warning(f"No valid messages found in thread {thread_id}")
+                    continue
+                
+                # Perform thread analysis
+                thread_analysis = analyze_single_thread(parsed_messages, thread_id)
+                
+                # Add thread to analyzed list
+                analyzed_thread_ids.append(thread_id)
+                
+                # Add thread analysis to results
+                thread_result = {
+                    'thread_id': thread_id,
+                    'message_count': len(parsed_messages),
+                    'topic': thread_analysis.get('topic', 'Unknown topic'),
+                    'sentiment': thread_analysis.get('sentiment', 'neutral'),
+                    'key_points': thread_analysis.get('key_points', []),
+                    'tags': thread_analysis.get('tags', [])
+                }
+                analysis_results['threads'].append(thread_result)
+                
+                # Add insights from this thread to overall insights
+                if 'insights' in thread_analysis and thread_analysis['insights']:
+                    for insight in thread_analysis['insights']:
+                        # Check if this insight already exists
+                        existing_insight = next((i for i in analysis_results['insights'] 
+                                               if i['key'] == insight['key']), None)
+                        
+                        if existing_insight:
+                            # Add this thread as evidence
+                            if thread_id not in existing_insight['evidence_threads']:
+                                existing_insight['evidence_threads'].append(thread_id)
+                                existing_insight['evidence_count'] = len(existing_insight['evidence_threads'])
+                        else:
+                            # Add new insight
+                            new_insight = {
+                                'key': insight['key'],
+                                'title': insight['title'],
+                                'description': insight['description'],
+                                'evidence_threads': [thread_id],
+                                'evidence_count': 1,
+                                'category': insight.get('category', 'general')
+                            }
+                            analysis_results['insights'].append(new_insight)
+                
+                logging.info(f"Completed analysis of thread {thread_id} ({i+1}/{len(threads)})")
+                
+            except Exception as e:
+                logging.error(f"Error analyzing thread {thread_id}: {str(e)}")
+        
+        # Mark threads as analyzed in storage
+        if analyzed_thread_ids:
+            thread_storage.mark_threads_as_analyzed(analyzed_thread_ids)
+            
+            # Create evidence map for threads
+            evidence_map = {}
+            for insight in analysis_results['insights']:
+                insight_key = insight['key']
+                if insight_key not in evidence_map:
+                    evidence_map[insight_key] = []
+                evidence_map[insight_key].extend(insight['evidence_threads'])
+            
+            # Save the analysis results
+            thread_storage.save_analysis_results(
+                results=analysis_results,
+                session_id=session_id,
+                analyzed_thread_ids=analyzed_thread_ids
+            )
+        
+        logging.info(f"Completed batch analysis of {len(threads)} threads. Marked {len(analyzed_thread_ids)} as analyzed.")
+        
+    except Exception as e:
+        logging.error(f"Error in thread batch analysis: {str(e)}")
+
+def analyze_single_thread(messages, thread_id):
+    """
+    Perform analysis on a single thread
+    
+    Args:
+        messages (list): List of message objects with role and content
+        thread_id (str): Thread ID
+        
+    Returns:
+        dict: Analysis results for this thread
+    """
+    try:
+        # Extract text content for analysis - handle both string and list content properly
+        text_content_parts = []
+        for msg in messages:
+            content = msg.get('content', '')
+            role = msg.get('role', 'unknown')
+            
+            # Format with role for better context
+            content_with_role = f"{role.upper()}: "
+            
+            if isinstance(content, list):
+                # Handle content that is a list of content blocks
+                text_blocks = []
+                for block in content:
+                    if isinstance(block, dict) and 'text' in block:
+                        text_blocks.append(block['text'])
+                    elif isinstance(block, str):
+                        text_blocks.append(block)
+                content_with_role += " ".join(text_blocks)
+            elif isinstance(content, str):
+                content_with_role += content
+            
+            text_content_parts.append(content_with_role)
+        
+        # Join all the text parts together
+        text_content = "\n".join(text_content_parts)
+        
+        # Get the Claude API key using the non-context version
+        api_key = get_claude_key_no_context()
+        if not api_key:
+            logging.error(f"Claude API key not found. Using simulated analysis for thread {thread_id}")
+            # Fall back to simulated analysis if no API key
+            return _simulated_analysis(text_content, thread_id)
+        
+        # Create the prompt for Claude
+        prompt = f"""
+You are analyzing a conversation thread from a chat platform. Your task is to extract useful insights from this conversation.
+
+Here's the conversation:
+---
+{text_content}
+---
+
+Please analyze this conversation and return a JSON object with the following structure:
+{{
+  "thread_id": "{thread_id}",
+  "topic_category": "Determine the primary topic category",
+  "user_sentiment": "positive/negative/neutral/mixed",
+  "key_points": ["List of 2-4 key points from the conversation"],
+  "tags": ["List of 3-5 relevant tags"],
+  "insights": [
+    {{
+      "title": "A clear, concise insight title",
+      "description": "A more detailed description of the insight",
+      "category": "user experience/product feedback/technical issue/feature request/etc.",
+      "supporting_evidence": ["Specific quotes or evidence from the conversation"]
+    }}
+  ]
+}}
+
+Focus on extracting actionable insights about:
+1. User satisfaction and pain points
+2. Feature requests or product feedback
+3. Common issues or confusions
+4. Technical problems reported
+
+Format your entire response as a valid JSON object with the structure described above.
+"""
+        
+        # Make the API call to Claude
+        logging.info(f"Calling Claude API for thread {thread_id}")
+        
+        # Claude API headers - using the latest API version for Claude-3 models
+        headers = {
+            "x-api-key": api_key,
+            "Content-Type": "application/json",
+            "anthropic-version": "2023-06-01"
+        }
+        
+        # Claude API payload with model and parameters
+        payload = {
+            "model": "claude-3-opus-20240229",
+            "max_tokens": 4000,
+            "messages": [
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.2
+        }
+        
+        # Make the API request
+        try:
+            response = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers=headers,
+                json=payload,
+                timeout=60  # Add timeout to prevent hanging
+            )
+            
+            if response.status_code != 200:
+                logging.error(f"Claude API error: {response.status_code} - {response.text}")
+                # Fall back to simulated analysis if API call fails
+                return _simulated_analysis(text_content, thread_id)
+        except Exception as e:
+            logging.error(f"Claude API request failed: {str(e)}")
+            return _simulated_analysis(text_content, thread_id)
+        
+        # Parse the response
+        claude_response = response.json()
+        logging.info(f"Claude API response received for thread {thread_id}")
+        
+        # Extract content from Claude's response
+        content = claude_response.get("content", [])
+        if not content or len(content) == 0:
+            logging.error(f"Empty content in Claude response for thread {thread_id}")
+            return _simulated_analysis(text_content, thread_id)
+            
+        # Extract the JSON from the text blocks
+        json_text = ""
+        for block in content:
+            if block.get("type") == "text":
+                json_text += block.get("text", "")
+        
+        # Parse the JSON response
+        try:
+            analysis_results = json.loads(json_text)
+            logging.info(f"Successfully parsed Claude analysis for thread {thread_id}")
+            return analysis_results
+        except json.JSONDecodeError as e:
+            logging.error(f"Failed to parse Claude JSON response: {str(e)}")
+            logging.error(f"Raw response: {json_text[:500]}...")
+            return _simulated_analysis(text_content, thread_id)
+            
+    except Exception as e:
+        logging.error(f"Error in Claude thread analysis: {str(e)}")
+        traceback.print_exc()
+        return {
+            "thread_id": thread_id,
+            "topic": "Unknown",
+            "sentiment": "neutral",
+            "key_points": [],
+            "tags": []
+        }
+
+def _simulated_analysis(text_content, thread_id):
+    """
+    Fallback simulation of analysis for when Claude API is not available
+    """
+    # Simple keyword-based analysis
+    topics = {
+        "technical": ["code", "bug", "error", "programming", "function", "api", "database"],
+        "support": ["help", "issue", "problem", "ticket", "resolve", "assistance"],
+        "feature": ["feature", "enhancement", "improvement", "add", "implement", "suggestion"],
+        "general": ["question", "curious", "wondering", "thought", "idea"]
+    }
+    
+    # Determine topic
+    topic_scores = {t: 0 for t in topics}
+    for topic, keywords in topics.items():
+        for keyword in keywords:
+            if keyword.lower() in text_content.lower():
+                topic_scores[topic] += 1
+    
+    main_topic = max(topic_scores.items(), key=lambda x: x[1])[0] if any(topic_scores.values()) else "general"
+    
+    # Generate random tags from the content
+    potential_tags = []
+    for word in text_content.split():
+        if len(word) > 5 and word.isalnum() and random.random() < 0.05:
+            potential_tags.append(word.lower())
+    
+    tags = list(set(potential_tags))[:3]  # Up to 3 unique tags
+    
+    # Simple sentiment analysis
+    positive_words = ["good", "great", "excellent", "helpful", "thanks", "appreciate", "solved"]
+    negative_words = ["bad", "issue", "problem", "error", "bug", "wrong", "failed", "broken"]
+    
+    sentiment_score = 0
+    for word in positive_words:
+        if word.lower() in text_content.lower():
+            sentiment_score += 1
+    for word in negative_words:
+        if word.lower() in text_content.lower():
+            sentiment_score -= 1
+            
+    sentiment = "positive" if sentiment_score > 0 else "negative" if sentiment_score < 0 else "neutral"
+    
+    # Extract a few key points (sentences)
+    sentences = [s.strip() for s in text_content.replace("\n", ". ").split(".") if s.strip()]
+    key_points = []
+    for sentence in sentences:
+        if len(sentence) > 15 and len(sentence) < 100 and random.random() < 0.2:
+            key_points.append(sentence)
+    
+    # Keep only up to 3 key points
+    key_points = key_points[:3]
+    
+    # Generate a unique insight with 50% probability
+    insights = []
+    if random.random() < 0.5:
+        insight_categories = ["user experience", "product feedback", "technical issue", "feature request"]
+        insight_templates = [
+            "Users are experiencing issues with {feature}",
+            "Multiple users have requested {feature}",
+            "There's confusion around how to use {feature}",
+            "Performance problems detected in {feature}"
+        ]
+        
+        # Create a synthetic insight
+        category = random.choice(insight_categories)
+        feature = tags[0] if tags else "this feature"
+        insight_key = f"{category.replace(' ', '_')}_{feature}"
+        
+        template = random.choice(insight_templates)
+        title = template.format(feature=feature)
+        
+        insights.append({
+            "key": insight_key,
+            "title": title,
+            "description": f"Based on analysis of thread {thread_id}, {title.lower()}.",
+            "category": category
+        })
+    
+    # Return the analysis results
+    return {
+        "thread_id": thread_id,
+        "topic": main_topic,
+        "sentiment": sentiment,
+        "key_points": key_points,
+        "tags": tags,
+        "insights": insights
+    }

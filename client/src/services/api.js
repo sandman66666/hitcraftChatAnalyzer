@@ -36,10 +36,10 @@ const api = {
   },
   
   // Start thread analysis
-  analyzeThreads: (sessionId, threadCount = 10) => {
-    return axios.post(`${BASE_URL}/analyze_threads`, { 
+  analyzeThreads: (sessionId, count = 10) => {
+    return axios.post(`${BASE_URL}/analyze_threads`, {
       session_id: sessionId,
-      thread_count: threadCount
+      count: count
     }, {
       withCredentials: true
     });
@@ -74,6 +74,30 @@ const api = {
     });
   },
   
+  // Get analysis status
+  getAnalysisStatus: (sessionId) => {
+    let url = `${BASE_URL}/analysis_status`;
+    if (sessionId) url += `?session_id=${sessionId}`;
+    
+    return axios.get(url, {
+      withCredentials: true
+    });
+  },
+  
+  // Get logs
+  getLogs: () => {
+    return axios.get(`${BASE_URL}/logs`, {
+      withCredentials: true
+    });
+  },
+  
+  // Get evidence for an insight
+  getInsightEvidence: (insightKey) => {
+    return axios.get(`${BASE_URL}/get_evidence?key=${encodeURIComponent(insightKey)}`, {
+      withCredentials: true
+    });
+  },
+  
   // Cancel analysis
   cancelAnalysis: (sessionId) => {
     return axios.post(`${BASE_URL}/cancel_analysis`, { 
@@ -92,21 +116,27 @@ const api = {
   
   // List threads - Note: Different URL pattern!
   listThreads: (sessionId, page = 1, perPage = 10) => {
-    return axios.get(`${ROOT_URL}/get_threads?session_id=${sessionId}&page=${page}&per_page=${perPage}`, {
+    let url = `${BASE_URL}/threads?page=${page}&per_page=${perPage}`;
+    if (sessionId) url += `&session_id=${sessionId}`;
+    
+    return axios.get(url, {
       withCredentials: true
     });
   },
   
   // Get specific thread - Note: Different URL pattern!
   getThread: (sessionId, threadId) => {
-    return axios.get(`${ROOT_URL}/get_thread_content?session_id=${sessionId}&thread_id=${threadId}`, {
+    let url = `${BASE_URL}/thread/${threadId}`;
+    if (sessionId) url += `?session_id=${sessionId}`;
+    
+    return axios.get(url, {
       withCredentials: true
     });
   },
   
   // Get logs
   getLogs: () => {
-    return axios.get(`${ROOT_URL}/logs`, {
+    return axios.get(`${BASE_URL}/logs`, {
       withCredentials: true
     });
   }

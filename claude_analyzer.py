@@ -352,7 +352,7 @@ def analyze_with_claude(text: str, api_key: str) -> Dict[str, Any]:
     """
     
     data = {
-        "model": "claude-3-opus-20240229",  # Use the latest Claude model available
+        "model": "claude-3-7-sonnet-20240307",  # Using Claude 3.7 Sonnet
         "max_tokens": 4000,
         "temperature": 0.0,  # We want deterministic, analytical responses
         "messages": [{"role": "user", "content": prompt}]

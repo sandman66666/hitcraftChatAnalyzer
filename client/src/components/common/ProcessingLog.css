@@ -1,3 +1,7 @@
+/* 
+  This CSS file is used to style the ProcessingLog component.
+*/
+
 .processing-log {
   height: 100%;
   display: flex;
@@ -52,9 +56,9 @@
 }
 
 .text-warning {
-  color: #ffcc00 !important;
+  color: #ffc107 !important;
 }
 
 .text-danger {
-  color: #ff4d4f !important;
+  color: #ff6b6b !important;
 }

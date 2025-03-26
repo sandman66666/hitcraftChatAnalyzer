@@ -56,8 +56,7 @@ const Sidebar = () => {
           <Nav.Link
             as={Link}
             to="/threads"
-            className={`${isActive('/threads') ? 'active' : ''} ${!threadExtracted ? 'disabled' : ''}`}
-            disabled={!threadExtracted}
+            className={`${isActive('/threads') ? 'active' : ''}`}
           >
             <FaComments className="me-2" />
             Threads

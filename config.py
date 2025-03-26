@@ -8,6 +8,7 @@ UPLOAD_FOLDER = 'uploads'
 TEMP_FOLDER = 'temp_chunks'
 RESULTS_FOLDER = 'analysis_results'
 THREADS_FOLDER = 'organized_threads'
+DATA_FOLDER = 'data'
 MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB max upload
 ALLOWED_EXTENSIONS = {'txt', 'rtf', 'json'}
 MAX_CHUNKS = int(os.environ.get('MAX_CHUNKS', 1))
@@ -20,7 +21,7 @@ CORS_HEADERS = ["Content-Type", "Authorization", "X-Requested-With"]
 
 # Server configuration
 HOST = '0.0.0.0'
-PORT = 8095
+PORT = 8096  # Updated to match the actual running port
 DEBUG = True
 
 # Create necessary directories
@@ -30,6 +31,7 @@ def create_app_directories():
     os.makedirs(TEMP_FOLDER, exist_ok=True)
     os.makedirs(RESULTS_FOLDER, exist_ok=True)
     os.makedirs(THREADS_FOLDER, exist_ok=True)
+    os.makedirs(DATA_FOLDER, exist_ok=True)
 
 def allowed_file(filename):
     """Check if a file has an allowed extension"""

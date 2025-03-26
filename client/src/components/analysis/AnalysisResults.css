@@ -1,5 +1,5 @@
 .analysis-results {
-  margin-top: 1rem;
+  margin-top: 20px;
 }
 
 .insight-card .card-header,
@@ -25,6 +25,53 @@
   color: #721c24;
 }
 
+.insights-list {
+  list-style: none;
+  padding: 0;
+}
+
+.insight-item {
+  padding: 15px;
+  margin-bottom: 15px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  background-color: #f9f9f9;
+  transition: all 0.2s ease;
+}
+
+.insight-item:hover {
+  box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+  transform: translateY(-2px);
+}
+
+.insight-item h6 {
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 8px;
+}
+
+.insight-item p {
+  color: #555;
+  margin-bottom: 10px;
+}
+
+.insight-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.evidence-badge {
+  cursor: pointer;
+  margin-left: 0.5rem;
+  font-size: 0.75rem;
+  transition: transform 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .analysis-list {
   list-style: none;
   padding: 0;
@@ -32,23 +79,29 @@
 }
 
 .analysis-list li {
-  padding: 0.75rem;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-  font-size: 0.95rem;
+  padding: 10px;
+  margin-bottom: 8px;
+  border-radius: 4px;
+  background-color: #f8f9fa;
 }
 
-.analysis-list li:last-child {
-  border-bottom: none;
+.analysis-list li:hover {
+  background-color: #e9ecef;
 }
 
 .analysis-list li.has-evidence {
   cursor: pointer;
-  transition: background-color 0.2s ease;
+  transition: all 0.2s ease;
   position: relative;
+  padding-left: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .analysis-list li.has-evidence:hover {
   background-color: rgba(0, 0, 0, 0.05);
+  transform: translateX(3px);
 }
 
 .analysis-list li.has-evidence::before {
@@ -61,15 +114,27 @@
   background-color: #61dafb;
 }
 
+.insight-card .analysis-list li.has-evidence::before {
+  background-color: #17a2b8;
+}
+
+.improvement-card .analysis-list li.has-evidence::before {
+  background-color: #ffc107;
+}
+
+.needs-card .analysis-list li.has-evidence::before {
+  background-color: #dc3545;
+}
+
 .list-item-content {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  width: 100%;
 }
 
-.evidence-badge {
-  margin-left: 0.5rem;
-  font-size: 0.75rem;
+.analysis-list li.has-evidence:hover .evidence-badge {
+  transform: scale(1.1);
 }
 
 /* Styles specifically for the supporting evidence feature */
@@ -83,4 +148,133 @@
 
 .needs-card .list-item-content .evidence-badge {
   background-color: #dc3545;
+}
+
+/* Add icon for clickable items */
+.analysis-list li.has-evidence .list-item-content::after {
+  content: "\f105"; /* Font Awesome arrow right icon */
+  font-family: "Font Awesome 5 Free";
+  font-weight: 900;
+  margin-left: 0.5rem;
+  opacity: 0.5;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.analysis-list li.has-evidence:hover .list-item-content::after {
+  opacity: 1;
+  transform: translateX(2px);
+}
+
+/* Category cards */
+.category-item {
+  height: 100%;
+  background-color: #f8f9fa;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 12px !important;
+  text-align: center;
+}
+
+.category-item:hover {
+  background-color: #e9ecef;
+  transform: translateY(-2px);
+}
+
+/* Discussions list */
+.discussions-list .list-group-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 15px;
+}
+
+.discussions-list .list-group-item:hover {
+  background-color: #f8f9fa;
+}
+
+/* User satisfaction section */
+.satisfaction-content {
+  padding: 5px;
+}
+
+.assessment {
+  font-size: 16px;
+  line-height: 1.6;
+  margin-bottom: 20px;
+  font-style: italic;
+  color: #555;
+  border-left: 4px solid #007bff;
+  padding-left: 15px;
+}
+
+.positive-indicators, .negative-indicators {
+  margin-bottom: 15px;
+}
+
+.positive-indicators h6, .negative-indicators h6 {
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.positive-indicators ul, .negative-indicators ul {
+  padding-left: 20px;
+}
+
+.positive-indicators li {
+  color: #28a745;
+}
+
+.negative-indicators li {
+  color: #dc3545;
+}
+
+/* Unmet needs */
+.unmet-needs-list {
+  list-style: none;
+  padding: 0;
+}
+
+.unmet-need-item {
+  padding: 12px 15px;
+  margin-bottom: 10px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  background-color: #f9f9f9;
+}
+
+.unmet-need-item h6 {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+/* Analysis cards */
+.insight-card .card-header {
+  background-color: rgba(23, 162, 184, 0.1);
+  border-bottom: 1px solid rgba(23, 162, 184, 0.2);
+}
+
+.needs-card .card-header {
+  background-color: rgba(220, 53, 69, 0.1);
+  border-bottom: 1px solid rgba(220, 53, 69, 0.2);
+}
+
+.improvement-card .card-header {
+  background-color: rgba(255, 193, 7, 0.1);
+  border-bottom: 1px solid rgba(255, 193, 7, 0.2);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .insight-meta, .list-item-content {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+  }
+  
+  .evidence-badge {
+    margin-top: 5px;
+  }
 }

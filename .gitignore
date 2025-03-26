@@ -4,10 +4,30 @@ uploads/
 /temp_chunks/
 /uploads/
 **/threads/*.json
+**/threads/*.txt
+organized_threads/
+/organized_threads/
+organized_threads/*.json
+organized_threads/*.txt
 analysis_results/*.json
+analysis_results/*.txt
 *_THREADS.json
 *_CHAT.json
 chats/*.json
+chats/*.txt
+/data/*.json
+/data/*.txt
+data/
+
+# Runtime data files
+*.json
+!package.json
+!package-lock.json
+!client/package.json
+!client/package-lock.json
+*.txt
+!requirements.txt
+!README.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
