@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAnalyzer } from '../context/AnalyzerContext';
 import LoadingIndicator from '../components/common/LoadingIndicator';
 import './Pages.css';
 import api from '../services/api';
 import AnalysisResults from '../components/analysis/AnalysisResults';
 import EvidenceModal from '../components/analysis/EvidenceModal';
+import AnalysisProgressBar from '../components/analysis/AnalysisProgressBar';
 
 const AnalysisPage = () => {
   const { state, actions } = useAnalyzer();
@@ -21,6 +22,16 @@ const AnalysisPage = () => {
   const [evidenceModalTitle, setEvidenceModalTitle] = useState("");
   const [evidenceModalData, setEvidenceModalData] = useState([]);
   
+  // Analysis progress state
+  const [analysisProgress, setAnalysisProgress] = useState({
+    isAnalyzing: false,
+    currentThread: 0,
+    totalThreads: 0,
+    analyzedThreads: 0,
+    startTime: null,
+    lastError: null
+  });
+  
   // Analysis controls
   const [analyzeCount, setAnalyzeCount] = useState(10);
   const [analysisStats, setAnalysisStats] = useState({
@@ -29,23 +40,82 @@ const AnalysisPage = () => {
     remaining_threads: 0
   });
   
-  // Load analysis data on component mount and when sessionId changes
-  useEffect(() => {
-    if (sessionId) {
-      loadAnalysisData();
-      fetchAnalysisStatus();
-    }
-  }, [sessionId]);
+  // Polling interval for progress updates
+  const pollingIntervalRef = useRef(null);
   
-  // Update local stats when global state changes
-  useEffect(() => {
-    setAnalysisStats(prev => ({
-      ...prev,
-      total_threads: threadCount || 0,
-      analyzed_threads: threadsAnalyzed || 0,
-      remaining_threads: (threadCount || 0) - (threadsAnalyzed || 0)
-    }));
-  }, [threadCount, threadsAnalyzed]);
+  // Start polling for analysis progress
+  const startProgressPolling = () => {
+    // Clear any existing interval first
+    stopProgressPolling();
+    
+    // Start a new polling interval - poll frequently during active analysis
+    pollingIntervalRef.current = setInterval(() => {
+      fetchAnalysisProgress();
+    }, 2000); // Poll every 2 seconds during active analysis
+  };
+  
+  // Slower polling when no analysis is in progress
+  const startSlowPolling = () => {
+    // Clear any existing interval first
+    stopProgressPolling();
+    
+    // Start a new polling interval at a slower rate
+    pollingIntervalRef.current = setInterval(() => {
+      fetchAnalysisProgress();
+    }, 30000); // Poll every 30 seconds when idle
+  };
+  
+  // Stop polling
+  const stopProgressPolling = () => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+  };
+  
+  // Fetch current analysis progress
+  const fetchAnalysisProgress = async () => {
+    if (!sessionId) return;
+    
+    try {
+      const response = await api.getAnalysisStatus(sessionId);
+      if (response.data) {
+        const isAnalyzing = response.data.is_analyzing || false;
+        
+        // Update component state with progress data
+        setAnalysisProgress({
+          isAnalyzing: isAnalyzing,
+          currentThread: response.data.current_thread || 0,
+          totalThreads: response.data.total_threads || 0,
+          analyzedThreads: response.data.analyzed_threads || 0,
+          startTime: response.data.start_time,
+          lastError: response.data.last_error
+        });
+        
+        // If analysis status changed from running to completed
+        if (response.data.was_analyzing && !isAnalyzing) {
+          // Analysis just finished, refresh results and switch to slow polling
+          loadAnalysisData();
+          startSlowPolling();
+        } 
+        // If analysis is running, ensure we're polling frequently 
+        else if (isAnalyzing) {
+          // Make sure we're on fast polling if analysis is running
+          if (pollingIntervalRef.current && 
+              (!analysisProgress.isAnalyzing || analysisProgress.isAnalyzing !== isAnalyzing)) {
+            startProgressPolling();
+          }
+        }
+        // If analysis is not running and we were previously in fast polling mode
+        else if (!isAnalyzing && analysisProgress.isAnalyzing) {
+          // Switch to slow polling
+          startSlowPolling();
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching analysis progress:", err);
+    }
+  };
   
   const fetchAnalysisStatus = async () => {
     try {
@@ -132,16 +202,13 @@ const AnalysisPage = () => {
       const response = await api.analyzeThreads(sessionId, analyzeCount);
       console.log("Analyze threads response:", response.data);
       
-      // Refresh analysis status
-      await fetchAnalysisStatus();
-      
-      // Refresh analysis data
-      await loadAnalysisData();
+      // Start polling more frequently during analysis
+      startProgressPolling();
       
       // Show success message
       actions.addLog({
         timestamp: new Date().toISOString(),
-        message: `Successfully analyzed threads. ${response.data.analyzed_count || 0} threads processed.`,
+        message: `Analysis started for ${analyzeCount} threads.`,
         level: 'success'
       });
     } catch (err) {
@@ -151,6 +218,11 @@ const AnalysisPage = () => {
         message: `Error analyzing threads: ${err.message}`,
         level: 'error'
       });
+      
+      setAnalysisProgress(prev => ({
+        ...prev,
+        lastError: err.message
+      }));
     } finally {
       setLoading(false);
     }
@@ -223,6 +295,31 @@ const AnalysisPage = () => {
     }
   };
 
+  // Update local stats when global state changes
+  useEffect(() => {
+    setAnalysisStats(prev => ({
+      ...prev,
+      total_threads: threadCount || 0,
+      analyzed_threads: threadsAnalyzed || 0,
+      remaining_threads: (threadCount || 0) - (threadsAnalyzed || 0)
+    }));
+  }, [threadCount, threadsAnalyzed]);
+  
+  // Load analysis data on component mount and when sessionId changes
+  useEffect(() => {
+    if (sessionId) {
+      loadAnalysisData();
+      fetchAnalysisStatus();
+      // Start with slow polling on initial load
+      startSlowPolling();
+    }
+    
+    // Cleanup on unmount
+    return () => {
+      stopProgressPolling();
+    };
+  }, [sessionId]);
+  
   // Render loading state
   if (loading) {
     return <LoadingIndicator message="Loading analysis data..." />;
@@ -241,6 +338,16 @@ const AnalysisPage = () => {
         </div>
       ) : (
         <>
+          {/* Analysis Progress Bar - Always show if we have progress data */}
+          <AnalysisProgressBar 
+            isAnalyzing={analysisProgress.isAnalyzing}
+            currentThread={analysisProgress.currentThread}
+            totalThreads={analysisProgress.totalThreads}
+            analyzedThreads={analysisProgress.analyzedThreads}
+            startTime={analysisProgress.startTime}
+            lastError={analysisProgress.lastError}
+          />
+        
           {/* Thread Statistics Dashboard */}
           <div className="analysis-stats-section">
             <h3>Thread Statistics</h3>

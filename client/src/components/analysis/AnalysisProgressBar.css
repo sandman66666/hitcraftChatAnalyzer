@@ -1,0 +1,44 @@
+.analysis-progress-card {
+  border-left: 4px solid #0d6efd;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+.analysis-progress-card.error {
+  border-left-color: #dc3545;
+}
+
+.analysis-progress-card.success {
+  border-left-color: #198754;
+}
+
+.progress-details {
+  margin-bottom: 12px;
+}
+
+.progress-stats {
+  font-weight: 500;
+}
+
+.thread-details {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e9ecef;
+}
+
+.progress-bar {
+  transition: width 0.5s ease;
+}
+
+/* Animated spinner */
+.fa-spin {
+  animation: fa-spin 2s infinite linear;
+}
+
+@keyframes fa-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}

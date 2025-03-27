@@ -111,7 +111,7 @@ def generate_mock_analysis() -> Dict[str, Any]:
                 "topic": "Production References", 
                 "count": 5,
                 "instances": [
-                    {"context": "User: How do I get that Daft Punk sound in my production?\nAssistant: Daft Punk's sound involves vocoder/talkbox effects on vocals, funk-inspired bass lines, classic drum machine sounds (TR-808/909), and sidechained compression for that 'pumping' effect."},
+                    {"context": "User: How do I get that warm, saturated drum sound like in this reference track?\nAssistant: That warm drum sound likely comes from analog saturation or compression. Try adding a saturation plugin to your drum bus and experiment with tape emulation."},
                     {"context": "User: What plugins would help me sound like Radiohead?\nAssistant: For Radiohead's sound, try plugins like Valhalla VintageVerb for spacious reverbs, delay plugins with filtering options, and granular effects for those experimental textures they're known for."}
                 ]
             },
@@ -302,6 +302,15 @@ def analyze_with_claude(text: str, api_key: str) -> Dict[str, Any]:
         "anthropic-version": "2023-06-01"  # Using the Anthropic API version, update as needed
     }
     
+    # Log API key status (masked for privacy)
+    if api_key:
+        masked_key = api_key[:4] + "..." + api_key[-4:]
+        logger.info(f"Using Claude API key: {masked_key}")
+    else:
+        logger.error("No Claude API key provided")
+        logger.warning("USING MOCK DATA due to missing API key")
+        return generate_mock_analysis()
+    
     prompt = f"""
     You are an expert conversation analyst. I will provide you with chat logs from a product called HitCraft, which appears to be a music production and songwriting assistant. 
     
@@ -376,6 +385,7 @@ def analyze_with_claude(text: str, api_key: str) -> Dict[str, Any]:
                     logger.error(f"API Error: {error_data.get('error', {}).get('message', 'Unknown error')}")
                 except:
                     pass
+            logger.warning("USING MOCK DATA due to Claude API error")
             return generate_mock_analysis()  # Use mock data on API error
         
         result = response.json()
@@ -384,44 +394,89 @@ def analyze_with_claude(text: str, api_key: str) -> Dict[str, Any]:
         # Extract the content from Claude's response
         if 'content' not in result or not result['content']:
             logger.error("No content in Claude response")
+            logger.warning("USING MOCK DATA due to missing content in Claude response")
             return generate_mock_analysis()
             
         content = result['content'][0]['text']
         logger.info(f"Response content length: {len(content)}")
         
-        # Parse the JSON response
+        # Try to parse the JSON from the response
         try:
-            # Claude often adds text before the JSON like "Here is the analysis in JSON format:"
-            # Let's try to find the first { character and parse from there
+            # Handle case where Claude adds text before the JSON
+            # Look for the first { character to start parsing JSON
             json_start = content.find('{')
             if json_start >= 0:
                 logger.info(f"Found JSON starting at position {json_start}")
-                json_str = content[json_start:].strip()
+                # Find the matching closing brace
+                json_content = content[json_start:]
+                # Make sure we have the complete JSON by finding balanced braces
+                open_braces = 0
+                close_braces = 0
+                for char in json_content:
+                    if char == '{':
+                        open_braces += 1
+                    elif char == '}':
+                        close_braces += 1
                 
-                # Find the last } to get the complete JSON object
-                json_end = json_str.rfind('}')
-                if json_end >= 0:
-                    json_str = json_str[:json_end+1]
-            # Sometimes Claude might include markdown code block syntax, so we handle that
-            elif "```json" in content:
-                logger.info("Extracting JSON from markdown code block (```json)")
-                json_str = content.split("```json")[1].split("```")[0].strip()
-            elif "```" in content:
-                logger.info("Extracting JSON from markdown code block (```)")
-                json_str = content.split("```")[1].strip()
+                logger.info(f"JSON has {open_braces} opening braces and {close_braces} closing braces")
+                
+                if open_braces > 0 and open_braces == close_braces:
+                    logger.info("JSON structure appears balanced")
+                    json_str = json_content
+                else:
+                    logger.warning("JSON structure appears unbalanced, using default extraction")
+                    # Fall back to previous methods
+                    if "```json" in content:
+                        logger.info("Extracting JSON from markdown code block (```json)")
+                        json_str = content.split("```json")[1].split("```")[0].strip()
+                    elif "```" in content:
+                        logger.info("Extracting JSON from markdown code block (```)")
+                        json_str = content.split("```")[1].strip()
+                    else:
+                        logger.info("Using raw content as JSON")
+                        json_str = content.strip()
             else:
-                logger.info("Using raw content as JSON")
-                json_str = content.strip()
+                # No JSON found, try other extraction methods
+                if "```json" in content:
+                    logger.info("Extracting JSON from markdown code block (```json)")
+                    json_str = content.split("```json")[1].split("```")[0].strip()
+                elif "```" in content:
+                    logger.info("Extracting JSON from markdown code block (```)")
+                    json_str = content.split("```")[1].strip()
+                else:
+                    logger.info("Using raw content as JSON")
+                    json_str = content.strip()
             
             logger.info(f"JSON string length: {len(json_str)}")
             logger.info(f"JSON string preview: {json_str[:300]}...")
             
-            analysis_result = json.loads(json_str)
+            try:
+                analysis_result = json.loads(json_str)
+                logger.info("Successfully parsed JSON")
+            except json.JSONDecodeError as e:
+                logger.error(f"Error parsing JSON: {str(e)}")
+                # Try again with a more aggressive approach to find JSON
+                try:
+                    # Look for anything that might be a complete JSON object
+                    import re
+                    json_pattern = r'(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})'
+                    match = re.search(json_pattern, content)
+                    if match:
+                        json_str = match.group(0)
+                        logger.info(f"Extracted potential JSON using regex: {json_str[:100]}...")
+                        analysis_result = json.loads(json_str)
+                        logger.info("Successfully parsed JSON using regex extraction")
+                    else:
+                        raise ValueError("Could not extract valid JSON with regex")
+                except Exception as e2:
+                    logger.error(f"Still could not parse JSON after regex attempt: {str(e2)}")
+                    logger.warning("USING MOCK DATA due to JSON parsing failure")
+                    return generate_mock_analysis()
             
             # Verify the result contains all required fields
             required_fields = ["categories", "top_discussions", "response_quality", 
-                            "improvement_areas", "user_satisfaction", "unmet_needs", 
-                            "product_effectiveness", "key_insights", "negative_chats"]
+                             "improvement_areas", "user_satisfaction", "unmet_needs", 
+                             "product_effectiveness", "key_insights", "negative_chats"]
             
             missing_fields = [field for field in required_fields if field not in analysis_result]
             if missing_fields:
@@ -433,17 +488,86 @@ def analyze_with_claude(text: str, api_key: str) -> Dict[str, Any]:
                     else:
                         analysis_result[field] = []
             
+            # Normalize key_insights structure to avoid KeyError in downstream processing
+            if 'key_insights' in analysis_result:
+                normalized_insights = []
+                for insight in analysis_result['key_insights']:
+                    if isinstance(insight, str):
+                        normalized_insights.append({"insight": insight})
+                    elif isinstance(insight, dict):
+                        new_insight = {}
+                        # Ensure 'insight' field exists, prioritizing existing fields
+                        if 'insight' in insight:
+                            new_insight['insight'] = insight['insight']
+                        elif 'key' in insight:
+                            new_insight['insight'] = insight['key']
+                        else:
+                            # Create a fallback insight from the first field or the whole dict
+                            keys = list(insight.keys())
+                            if keys:
+                                new_insight['insight'] = f"{keys[0]}: {insight[keys[0]]}"
+                            else:
+                                new_insight['insight'] = "Unknown insight"
+                        
+                        # Copy any other fields
+                        for k, v in insight.items():
+                            if k != 'insight':
+                                new_insight[k] = v
+                                
+                        normalized_insights.append(new_insight)
+                    else:
+                        # Handle non-dict, non-string case
+                        normalized_insights.append({"insight": str(insight)})
+                
+                analysis_result['key_insights'] = normalized_insights
+                logger.info(f"Normalized {len(normalized_insights)} key insights")
+            
+            # Also normalize improvement_areas
+            if 'improvement_areas' in analysis_result:
+                normalized_areas = []
+                for area in analysis_result['improvement_areas']:
+                    if isinstance(area, str):
+                        normalized_areas.append({"area": area})
+                    elif isinstance(area, dict):
+                        new_area = {}
+                        # Ensure 'area' field exists
+                        if 'area' in area:
+                            new_area['area'] = area['area']
+                        elif 'key' in area:
+                            new_area['area'] = area['key']
+                        else:
+                            keys = list(area.keys())
+                            if keys:
+                                new_area['area'] = f"{keys[0]}: {area[keys[0]]}"
+                            else:
+                                new_area['area'] = "Unknown area"
+                        
+                        # Copy any other fields
+                        for k, v in area.items():
+                            if k != 'area':
+                                new_area[k] = v
+                                
+                        normalized_areas.append(new_area)
+                    else:
+                        normalized_areas.append({"area": str(area)})
+                
+                analysis_result['improvement_areas'] = normalized_areas
+                logger.info(f"Normalized {len(normalized_areas)} improvement areas")
+            
+            logger.info("Successfully normalized Claude analysis result")
             return analysis_result
             
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON from Claude response: {str(e)}")
-            logger.error(f"Raw response content: {content[:500]}...")
+        except Exception as e:
+            logger.error(f"Failed to parse Claude JSON response: {str(e)}")
+            logger.error(f"Raw response: {content[:500]}...")
             
             # Return mock data instead of failing
+            logger.warning("USING MOCK DATA due to JSON decode error")
             return generate_mock_analysis()
         
     except requests.exceptions.RequestException as e:
         logger.error(f"Error calling Claude API: {str(e)}")
+        logger.warning("USING MOCK DATA due to request exception")
         # Return mock data on request error
         return generate_mock_analysis()
 
@@ -479,6 +603,44 @@ def analyze_single_thread(thread_content: str, api_key: str) -> Dict[str, Any]:
         for field in required_fields:
             if field not in analysis:
                 analysis[field] = {}
+        
+        # Normalize key_insights structure to prevent KeyError: 'key'
+        if 'key_insights' in analysis:
+            normalized_insights = []
+            for insight in analysis['key_insights']:
+                if isinstance(insight, str):
+                    normalized_insights.append({"insight": insight})
+                elif isinstance(insight, dict):
+                    # Handle case where insight is under "key" or missing completely
+                    if 'insight' not in insight:
+                        if 'key' in insight:
+                            insight['insight'] = insight['key']
+                        elif len(insight) > 0:
+                            # Just use the first item as the insight
+                            first_key = list(insight.keys())[0]
+                            insight['insight'] = f"{first_key}: {insight[first_key]}"
+                        else:
+                            insight['insight'] = "Unknown insight"
+                    normalized_insights.append(insight)
+            analysis['key_insights'] = normalized_insights
+            
+        # Same for improvement areas
+        if 'improvement_areas' in analysis:
+            normalized_areas = []
+            for area in analysis['improvement_areas']:
+                if isinstance(area, str):
+                    normalized_areas.append({"area": area})
+                elif isinstance(area, dict):
+                    if 'area' not in area:
+                        if 'key' in area:
+                            area['area'] = area['key']
+                        elif len(area) > 0:
+                            first_key = list(area.keys())[0]
+                            area['area'] = f"{first_key}: {area[first_key]}"
+                        else:
+                            area['area'] = "Unknown area"
+                    normalized_areas.append(area)
+            analysis['improvement_areas'] = normalized_areas
         
         return analysis
         
