@@ -17,6 +17,7 @@ import config
 import thread_analyzer
 import thread_storage
 import copy
+import glob
 
 # Create a Blueprint
 analysis_bp = Blueprint('analysis', __name__)
@@ -479,24 +480,30 @@ def get_insight_evidence():
 def analyze_threads_in_background(api_key, thread_data, state):
     """Analyze threads in the background and update state"""
     try:
-        add_analysis_log(f"Starting background analysis of {len(thread_data)} threads", "info")
+        num_threads = len(thread_data)
+        add_analysis_log(f"Starting analysis batch for {num_threads} threads")
         
-        # Process threads one by one
+        # List to store analysis results
         thread_results = []
         evidence_map = {}
         analyzed_thread_ids = []
         
+        # For each thread
         for i, thread in enumerate(thread_data):
             thread_id = thread['id']
+            add_analysis_log(f"Analyzing thread {thread_id} ({i+1}/{num_threads})")
+            
+            # Store metadata in state
+            state['current_thread'] = thread_id
+            state['completed_threads'] = i
+            state['total_threads'] = num_threads
+            state['last_updated'] = datetime.datetime.now()
             
             try:
-                # Update state
-                state['current_thread'] = i + 1
-                state['last_updated'] = datetime.datetime.now()
+                # Extract messages from thread
+                messages = []
                 
-                add_analysis_log(f"Analyzing thread {i+1}/{len(thread_data)}: {thread_id}", "info")
-                
-                # Format thread messages for analysis
+                # Try to get messages from thread content directly
                 if 'content' in thread and 'messages' in thread['content']:
                     messages = thread['content']['messages']
                 else:
@@ -519,7 +526,12 @@ def analyze_threads_in_background(api_key, thread_data, state):
                 if result:
                     add_analysis_log(f"Result for thread {thread_id} has keys: {list(result.keys())}", "debug")
                     if 'key_insights' in result:
-                        add_analysis_log(f"key_insights type: {type(result['key_insights'])}, content: {result['key_insights'][:100]}...", "debug")
+                        if isinstance(result['key_insights'], list):
+                            # Check the structure of the first few key_insights to help debugging
+                            for idx, insight in enumerate(result['key_insights'][:3]):
+                                add_analysis_log(f"key_insights[{idx}] type: {type(insight)}, structure: {insight}", "debug")
+                        else:
+                            add_analysis_log(f"key_insights is not a list: {type(result['key_insights'])}", "debug")
                 
                 if result and 'error' not in result:
                     try:
@@ -534,7 +546,13 @@ def analyze_threads_in_background(api_key, thread_data, state):
                         # Just track the thread as analyzed
                         analyzed_thread_ids.append(thread_id)
                         state['analyzed_threads'] += 1
-                        add_analysis_log(f"Thread {thread_id} marked as analyzed (skipping evidence map processing)", "info")
+                        add_analysis_log(f"Completed analysis of thread {thread_id} ({i+1}/{num_threads})", "info")
+                    except KeyError as ke:
+                        add_analysis_log(f"KeyError processing thread {thread_id}: {str(ke)}", "error")
+                        add_analysis_log(f"Keys available in result: {list(result.keys())}", "debug")
+                        # Try to continue despite the error, just add what we have
+                        analyzed_thread_ids.append(thread_id)
+                        state['analyzed_threads'] += 1
                     except Exception as thread_error:
                         add_analysis_log(f"Error processing thread {thread_id}: {str(thread_error)}", "error")
                         add_analysis_log(traceback.format_exc(), "error")
@@ -543,6 +561,7 @@ def analyze_threads_in_background(api_key, thread_data, state):
             
             except Exception as thread_error:
                 add_analysis_log(f"Error processing thread {thread_id}: {str(thread_error)}", "error")
+                add_analysis_log(traceback.format_exc(), "error")
                 continue
         
         # Mark threads as analyzed in persistent storage
@@ -554,22 +573,28 @@ def analyze_threads_in_background(api_key, thread_data, state):
         # If we have results, summarize them
         if thread_results:
             add_analysis_log(f"Analyzing completed for {len(thread_results)} threads. Generating overall summary...", "info")
-            combined_results = summarize_and_save_analysis_results(api_key, state['session_id'], state['filename'], thread_results)
             
-            if combined_results:
-                state['combined_results'] = combined_results
+            # Wrap the summarization in its own try-except to isolate errors
+            try:
+                combined_results = summarize_and_save_analysis_results(api_key, state['session_id'], state['filename'], thread_results)
                 
-                # Save to persistent storage
-                thread_storage.save_analysis_results(
-                    combined_results, 
-                    state['session_id'], 
-                    state['filename'], 
-                    analyzed_thread_ids
-                )
-                
-                add_analysis_log("Analysis completed successfully!", "info")
-            else:
-                add_analysis_log("Error generating combined results", "error")
+                if combined_results:
+                    state['combined_results'] = combined_results
+                    
+                    # Save to persistent storage
+                    thread_storage.save_analysis_results(
+                        combined_results, 
+                        state['session_id'], 
+                        state['filename'], 
+                        analyzed_thread_ids
+                    )
+                    
+                    add_analysis_log("Analysis completed successfully!", "info")
+                else:
+                    add_analysis_log("Error generating combined results", "error")
+            except Exception as summary_error:
+                add_analysis_log(f"Error in summarize_and_save_analysis_results: {str(summary_error)}", "error")
+                add_analysis_log(traceback.format_exc(), "error")
         else:
             add_analysis_log("No threads were successfully analyzed", "error")
             
@@ -663,26 +688,11 @@ def analyze_single_thread(api_key, messages):
                 if 'negative_chats' in result and isinstance(result['negative_chats'], dict) and 'categories' in result['negative_chats']:
                     normalized_categories = []
                     for category in result['negative_chats']['categories']:
-                        if isinstance(category, str):
+                        if isinstance(category, dict) and 'category' in category:
+                            cat_name = category['category']
+                            normalized_categories.append({"category": cat_name})
+                        elif isinstance(category, str):
                             normalized_categories.append({"category": category})
-                        elif isinstance(category, dict):
-                            new_category = {}
-                            if 'category' in category:
-                                new_category['category'] = category['category']
-                            elif 'key' in category:
-                                new_category['category'] = category['key']
-                            else:
-                                keys = list(category.keys())
-                                if keys:
-                                    new_category['category'] = f"{keys[0]}: {category[keys[0]]}"
-                                else:
-                                    new_category['category'] = "Unknown category"
-                            
-                            for k, v in category.items():
-                                if k not in ['category', 'key']:
-                                    new_category[k] = v
-                            
-                            normalized_categories.append(new_category)
                         else:
                             normalized_categories.append({"category": str(category)})
                     
@@ -783,6 +793,9 @@ def summarize_and_save_analysis_results(api_key, session_id, filename, threads):
         thread_id = thread_data.get('thread_id', 'unknown')
         thread_ids.append(thread_id)
         
+        # Debug log the thread_data structure to help with troubleshooting
+        add_analysis_log(f"Processing thread {thread_id} with keys: {list(thread_data.keys())}", "debug")
+        
         # Check if this is a real analysis (not mock data)
         mock_analysis = False
         if thread_data.get('categories') and thread_data.get('categories') == [
@@ -813,99 +826,149 @@ def summarize_and_save_analysis_results(api_key, session_id, filename, threads):
             thread_metadata.append(meta)
             
             # Extract categories
-            if 'categories' in thread_data and thread_data['categories']:
-                for category in thread_data['categories']:
-                    if isinstance(category, str):
-                        cat_name = category
-                    elif isinstance(category, dict) and 'name' in category:
-                        cat_name = category['name']
-                    else:
-                        continue
-                        
-                    categories[cat_name] = categories.get(cat_name, 0) + 1
+            try:
+                if 'categories' in thread_data and thread_data['categories']:
+                    for category in thread_data['categories']:
+                        if isinstance(category, str):
+                            cat_name = category
+                        elif isinstance(category, dict) and 'name' in category:
+                            cat_name = category['name']
+                        else:
+                            continue
+                            
+                        categories[cat_name] = categories.get(cat_name, 0) + 1
+            except Exception as e:
+                add_analysis_log(f"Error processing categories for thread {thread_id}: {str(e)}", "error")
             
             # Extract discussions/topics
-            if 'top_discussions' in thread_data and thread_data['top_discussions']:
-                for discussion in thread_data['top_discussions']:
-                    if isinstance(discussion, dict) and 'topic' in discussion:
-                        topic = discussion['topic']
-                        discussions[topic] = discussions.get(topic, 0) + 1
+            try:
+                if 'top_discussions' in thread_data and thread_data['top_discussions']:
+                    for discussion in thread_data['top_discussions']:
+                        if isinstance(discussion, dict) and 'topic' in discussion:
+                            topic = discussion['topic']
+                            discussions[topic] = discussions.get(topic, 0) + 1
+            except Exception as e:
+                add_analysis_log(f"Error processing discussions for thread {thread_id}: {str(e)}", "error")
             
             # Extract response quality scores
-            if 'response_quality' in thread_data and 'average_score' in thread_data['response_quality']:
-                score = thread_data['response_quality']['average_score']
-                if isinstance(score, (int, float)) and 0 <= score <= 10:
-                    response_scores.append(score)
+            try:
+                if 'response_quality' in thread_data and 'average_score' in thread_data['response_quality']:
+                    score = thread_data['response_quality']['average_score']
+                    if isinstance(score, (int, float)) and 0 <= score <= 10:
+                        response_scores.append(score)
+            except Exception as e:
+                add_analysis_log(f"Error processing response scores for thread {thread_id}: {str(e)}", "error")
             
             # Extract good and poor examples
-            if 'response_quality' in thread_data:
-                if 'good_examples' in thread_data['response_quality']:
-                    for example in thread_data['response_quality']['good_examples']:
-                        if isinstance(example, dict) and 'context' in example:
-                            good_examples.append(example)
-                
-                if 'poor_examples' in thread_data['response_quality']:
-                    for example in thread_data['response_quality']['poor_examples']:
-                        if isinstance(example, dict) and 'context' in example:
-                            poor_examples.append(example)
+            try:
+                if 'response_quality' in thread_data:
+                    if 'good_examples' in thread_data['response_quality']:
+                        for example in thread_data['response_quality']['good_examples']:
+                            if isinstance(example, dict) and 'context' in example:
+                                good_examples.append(example)
+                    
+                    if 'poor_examples' in thread_data['response_quality']:
+                        for example in thread_data['response_quality']['poor_examples']:
+                            if isinstance(example, dict) and 'context' in example:
+                                poor_examples.append(example)
+            except Exception as e:
+                add_analysis_log(f"Error processing examples for thread {thread_id}: {str(e)}", "error")
             
             # Extract improvement areas
-            if 'improvement_areas' in thread_data:
-                for area in thread_data['improvement_areas']:
-                    if isinstance(area, str):
-                        area_name = area
-                    elif isinstance(area, dict) and 'area' in area:
-                        area_name = area['area']
-                    else:
-                        continue
+            try:
+                if 'improvement_areas' in thread_data:
+                    add_analysis_log(f"Processing improvement_areas: {thread_data['improvement_areas'][:100]}...", "debug")
+                    for area in thread_data['improvement_areas']:
+                        area_name = None
+                        if isinstance(area, str):
+                            area_name = area
+                        elif isinstance(area, dict):
+                            if 'area' in area:
+                                area_name = area['area']
+                            elif 'key' in area:
+                                area_name = area['key']
+                            elif len(area) > 0:
+                                # Fallback to first key/value
+                                key = list(area.keys())[0]
+                                area_name = f"{key}: {area[key]}"
                         
-                    improvement_areas[area_name] = improvement_areas.get(area_name, 0) + 1
+                        if area_name:
+                            improvement_areas[area_name] = improvement_areas.get(area_name, 0) + 1
+            except Exception as e:
+                add_analysis_log(f"Error processing improvement areas for thread {thread_id}: {str(e)}", "error")
             
             # Extract user satisfaction
-            if 'user_satisfaction' in thread_data:
-                if 'score' in thread_data['user_satisfaction']:
-                    score = thread_data['user_satisfaction']['score']
-                    if isinstance(score, (int, float)) and 0 <= score <= 10:
-                        satisfaction_scores.append(score)
-                
-                if 'unmet_needs' in thread_data['user_satisfaction']:
-                    for need in thread_data['user_satisfaction']['unmet_needs']:
-                        if isinstance(need, dict) and 'need' in need:
-                            unmet_needs.append(need)
+            try:
+                if 'user_satisfaction' in thread_data:
+                    if 'score' in thread_data['user_satisfaction']:
+                        score = thread_data['user_satisfaction']['score']
+                        if isinstance(score, (int, float)) and 0 <= score <= 10:
+                            satisfaction_scores.append(score)
+                    
+                    if 'unmet_needs' in thread_data['user_satisfaction']:
+                        for need in thread_data['user_satisfaction']['unmet_needs']:
+                            if isinstance(need, dict) and 'need' in need:
+                                unmet_needs.append(need)
+            except Exception as e:
+                add_analysis_log(f"Error processing user satisfaction for thread {thread_id}: {str(e)}", "error")
             
             # Extract product effectiveness
-            if 'product_effectiveness' in thread_data and isinstance(thread_data['product_effectiveness'], dict):
-                if 'strengths' in thread_data['product_effectiveness']:
-                    for strength in thread_data['product_effectiveness']['strengths']:
-                        if isinstance(strength, str):
-                            product_strengths[strength] = product_strengths.get(strength, 0) + 1
-                        elif isinstance(strength, dict) and 'strength' in strength:
-                            product_strengths[strength['strength']] = product_strengths.get(strength['strength'], 0) + 1
-                
-                if 'weaknesses' in thread_data['product_effectiveness']:
-                    for weakness in thread_data['product_effectiveness']['weaknesses']:
-                        if isinstance(weakness, str):
-                            product_weaknesses[weakness] = product_weaknesses.get(weakness, 0) + 1
-                        elif isinstance(weakness, dict) and 'weakness' in weakness:
-                            product_weaknesses[weakness['weakness']] = product_weaknesses.get(weakness['weakness'], 0) + 1
+            try:
+                if 'product_effectiveness' in thread_data and isinstance(thread_data['product_effectiveness'], dict):
+                    if 'strengths' in thread_data['product_effectiveness']:
+                        for strength in thread_data['product_effectiveness']['strengths']:
+                            if isinstance(strength, str):
+                                product_strengths[strength] = product_strengths.get(strength, 0) + 1
+                            elif isinstance(strength, dict) and 'strength' in strength:
+                                product_strengths[strength['strength']] = product_strengths.get(strength['strength'], 0) + 1
+                    
+                    if 'weaknesses' in thread_data['product_effectiveness']:
+                        for weakness in thread_data['product_effectiveness']['weaknesses']:
+                            if isinstance(weakness, str):
+                                product_weaknesses[weakness] = product_weaknesses.get(weakness, 0) + 1
+                            elif isinstance(weakness, dict) and 'weakness' in weakness:
+                                product_weaknesses[weakness['weakness']] = product_weaknesses.get(weakness['weakness'], 0) + 1
+            except Exception as e:
+                add_analysis_log(f"Error processing product effectiveness for thread {thread_id}: {str(e)}", "error")
             
             # Extract key insights
-            if 'key_insights' in thread_data:
-                for insight in thread_data['key_insights']:
-                    if isinstance(insight, str):
-                        key_insights[insight] = key_insights.get(insight, 0) + 1
-                    elif isinstance(insight, dict) and 'insight' in insight:
-                        key_insights[insight['insight']] = key_insights.get(insight['insight'], 0) + 1
-                    elif isinstance(insight, dict) and 'key' in insight:
-                        # Handle alternative field name
-                        key_insights[insight['key']] = key_insights.get(insight['key'], 0) + 1
+            try:
+                if 'key_insights' in thread_data:
+                    add_analysis_log(f"Processing key_insights type: {type(thread_data['key_insights'])}", "debug")
+                    if isinstance(thread_data['key_insights'], list):
+                        for insight in thread_data['key_insights']:
+                            insight_text = None
+                            if isinstance(insight, str):
+                                insight_text = insight
+                            elif isinstance(insight, dict):
+                                # Try multiple possible field names
+                                for field in ['insight', 'key', 'description', 'title', 'text']:
+                                    if field in insight:
+                                        insight_text = insight[field]
+                                        break
+                                
+                                # If still no insight text, use the first available field
+                                if not insight_text and len(insight) > 0:
+                                    key = list(insight.keys())[0]
+                                    insight_text = f"{key}: {insight[key]}"
+                            
+                            if insight_text:
+                                key_insights[insight_text] = key_insights.get(insight_text, 0) + 1
+                    else:
+                        add_analysis_log(f"key_insights is not a list: {thread_data['key_insights']}", "warning")
+            except Exception as e:
+                add_analysis_log(f"Error processing key insights for thread {thread_id}: {str(e)}", "error")
+                add_analysis_log(traceback.format_exc(), "error")
             
             # Extract problem categories
-            if 'negative_chats' in thread_data and 'categories' in thread_data['negative_chats']:
-                for category in thread_data['negative_chats']['categories']:
-                    if isinstance(category, dict) and 'category' in category:
-                        cat_name = category['category']
-                        problem_categories[cat_name] = problem_categories.get(cat_name, 0) + 1
+            try:
+                if 'negative_chats' in thread_data and 'categories' in thread_data['negative_chats']:
+                    for category in thread_data['negative_chats']['categories']:
+                        if isinstance(category, dict) and 'category' in category:
+                            cat_name = category['category']
+                            problem_categories[cat_name] = problem_categories.get(cat_name, 0) + 1
+            except Exception as e:
+                add_analysis_log(f"Error processing negative chat categories for thread {thread_id}: {str(e)}", "error")
     
     # If we don't have any real analysis data, warn about it
     if not has_real_analysis:
@@ -949,23 +1012,14 @@ def summarize_and_save_analysis_results(api_key, session_id, filename, threads):
         if 'problem_categories' in existing_results:
             for cat, count in existing_results['problem_categories'].items():
                 problem_categories[cat] = problem_categories.get(cat, 0) + count
-        
-        # Keep existing examples and add new ones
+                
+        # Add previous examples
         if 'good_examples' in existing_results:
             good_examples.extend(existing_results['good_examples'])
-        
+            
         if 'poor_examples' in existing_results:
             poor_examples.extend(existing_results['poor_examples'])
-        
-        # Keep response scores
-        if 'response_scores' in existing_results:
-            response_scores.extend(existing_results['response_scores'])
-        
-        # Keep satisfaction scores
-        if 'satisfaction_scores' in existing_results:
-            satisfaction_scores.extend(existing_results['satisfaction_scores'])
-        
-        # Keep unmet needs
+            
         if 'unmet_needs' in existing_results:
             unmet_needs.extend(existing_results['unmet_needs'])
     
